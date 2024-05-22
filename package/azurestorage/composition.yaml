@@ -58,6 +58,12 @@ spec:
                 accountTier: {{ default "Standard" $.observed.composite.resource.spec.accountTier }}                  # called Performance in Azure UI
                 publicNetworkAccessEnabled: false
                 allowNestedItemsToBePublic: false
+                tags:
+                  source: crossplane
+                  claim-name: {{ $.observed.composite.resource.spec.claimRef.name }}
+                  claim-kind: {{ $.observed.composite.resource.spec.claimRef.kind }}
+                  claim-api-version: {{ $.observed.composite.resource.spec.claimRef.apiVersion }}
+                  composite: {{ $.observed.composite.resource.metadata.uid }}
               writeConnectionSecretToRef:
                 namespace: {{ $.observed.composite.resource.spec.claimRef.namespace }}
                 name: {{ $.observed.composite.resource.spec.claimRef.name }}-connection
@@ -86,6 +92,12 @@ spec:
                   - name: default
                     privateDnsZoneIds:
                       - "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+                tags:
+                  source: crossplane
+                  claim-name: {{ $.observed.composite.resource.spec.claimRef.name }}
+                  claim-kind: {{ $.observed.composite.resource.spec.claimRef.kind }}
+                  claim-api-version: {{ $.observed.composite.resource.spec.claimRef.apiVersion }}
+                  composite: {{ $.observed.composite.resource.metadata.uid }}
         
             ---
             apiVersion: network.azure.upbound.io/v1beta1
@@ -111,6 +123,12 @@ spec:
                   - name: default
                     privateDnsZoneIds:
                       - "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/privatelink.file.core.windows.net"
+                tags:
+                  source: crossplane
+                  claim-name: {{ $.observed.composite.resource.spec.claimRef.name }}
+                  claim-kind: {{ $.observed.composite.resource.spec.claimRef.kind }}
+                  claim-api-version: {{ $.observed.composite.resource.spec.claimRef.apiVersion }}
+                  composite: {{ $.observed.composite.resource.metadata.uid }}
 
             ---
             apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
