@@ -47,4 +47,5 @@ spec:
                   default: "gpt-4o"
                 model-version:
                   type: string
-                  description: "Model version like 2024-04-09"
+                  description: "Model version like 2024-05-13"
+                  default: "2024-05-13"

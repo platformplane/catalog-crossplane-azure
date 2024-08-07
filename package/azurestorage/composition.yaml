@@ -39,6 +39,7 @@ spec:
         source: Inline
         inline:
           template: |
+
             apiVersion: storage.azure.upbound.io/v1beta1
             kind: Account
             metadata:
@@ -48,7 +49,7 @@ spec:
             {{ if eq $.observed.composite.resource.spec.claimRef nil }}
                 crossplane.io/external-name: {}
             {{ else }}
-                crossplane.io/external-name: {{ regexReplaceAll "[^a-z0-9]" (printf "%s" $.observed.composite.resource.metadata.uid | lower) ""  | trunc 24 }}
+                crossplane.io/external-name: {{ regexReplaceAll "[^a-z0-9]" (printf "%s" $.observed.composite.resource.metadata.uid | lower) "" | trunc 24 }}
             {{ end }}
             spec:
               forProvider:
