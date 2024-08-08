@@ -40,6 +40,7 @@ spec:
                   enum:
                     - "Switzerland North"
                     - "Southeast Asia"
+                    - "Sweden Central"
                   default: "Switzerland North"
                 model-name:
                   type: string

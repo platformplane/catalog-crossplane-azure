@@ -54,7 +54,7 @@ spec:
                 location: {{ default "Switzerland North" $composite.spec.location }}               # called Region in Azure UI
                 kind: OpenAI
                 publicNetworkAccessEnabled: false
-                customSubdomainName: {{ regexReplaceAll "[^a-z0-9-]" (printf "%s-%s" $claim.name $composite.metadata.uid | lower) "" | trunc 63 }}
+                customSubdomainName: {{ regexReplaceAll "[^a-z0-9]" (printf "%s" $composite.metadata.uid | lower) "" | trunc 24 }}
                 skuName: S0
                 tags:
                   source: crossplane
