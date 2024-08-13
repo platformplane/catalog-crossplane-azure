@@ -72,15 +72,15 @@ spec:
             metadata:
               name: {{ $claim.name }}-gpt-4o
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: deploymentgpt
+                gotemplating.fn.crossplane.io/composition-resource-name: deploymentllm
                 crossplane.io/external-name: gpt-4o
             spec:
               forProvider:
                 cognitiveAccountId: {{ $account.resource.status.atProvider.id }}
                 model:        
                   - format: OpenAI
-                    name: {{ index $composite.spec "model-name" }}
-                    version: {{ index $composite.spec "model-version" }}
+                    name: "gpt-4o"
+                    version: "2024-05-13"
                 scale:
                   - type: GlobalStandard
                     capacity: 80
@@ -89,17 +89,17 @@ spec:
             apiVersion: cognitiveservices.azure.upbound.io/v1beta1
             kind: Deployment
             metadata:
-              name: {{ $claim.name }}-embedding-ada-002
+              name: {{ $claim.name }}-text-embedding-3-large
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: deploymentada
-                crossplane.io/external-name: embedding-ada-002
+                gotemplating.fn.crossplane.io/composition-resource-name: deploymentembed
+                crossplane.io/external-name: text-embedding-3-large
             spec:
               forProvider:
                 cognitiveAccountId: {{ $account.resource.status.atProvider.id }}
                 model:        
                   - format: OpenAI
-                    name: text-embedding-ada-002
-                    version: "2"
+                    name: text-embedding-3-large
+                    version: "1"
                 scale:
                   - type: Standard
                     capacity: 10
@@ -159,9 +159,9 @@ spec:
         rules:
           - sequence:
             - "account"
-            - "deploymentgpt"
+            - "deploymentllm"
             - "endpoint"
           - sequence:
             - "account"
-            - "deploymentada"
+            - "deploymentembed"
             - "endpoint"

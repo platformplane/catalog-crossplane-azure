@@ -38,15 +38,7 @@ spec:
                   description: "Azure location for the storage account"
                   display-name: "Location"
                   enum:
-                    - "Switzerland North"
-                    - "Southeast Asia"
+                    # - "Switzerland North"
+                    # - "Southeast Asia"
                     - "Sweden Central"
-                  default: "Switzerland North"
-                model-name:
-                  type: string
-                  description: "Model name like gpt-4o"
-                  default: "gpt-4o"
-                model-version:
-                  type: string
-                  description: "Model version like 2024-05-13"
-                  default: "2024-05-13"
+                  default: "Sweden Central"                
