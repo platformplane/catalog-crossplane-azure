@@ -1,0 +1,55 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: azureaisearchcomposites.catalog.cluster.local
+spec:
+  group: catalog.cluster.local
+  metadata:
+    labels:
+      catalog.cluster.local/kind: AzureAiSearch
+    annotations:
+      catalog.cluster.local/title: "Azure AI Search"
+      catalog.cluster.local/description: "Azure AI Search is a cloud-based search service that uses machine learning to extract insights from unstructured data."
+      catalog.cluster.local/icon: "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxOCAxOCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJhIiB4MT0iOSIgeTE9Ii4zNiIgeDI9IjkiIHkyPSIxOC4zMSIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iLjE4IiBzdG9wLWNvbG9yPSIjNWVhMGVmIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDA3OGQ0Ii8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHBhdGggZD0iTTE4IDExLjMyYTQuMTIgNC4xMiAwIDAwLTMuNTEtNCA1LjE1IDUuMTUgMCAwMC01LjI1LTUgNS4yNSA1LjI1IDAgMDAtNSAzLjQ5QTQuODYgNC44NiAwIDAwMCAxMC41OWE1IDUgMCAwMDUuMDcgNC44Mmg4LjY1YS43OC43OCAwIDAwLjIyIDBBNC4xMyA0LjEzIDAgMDAxOCAxMS4zMnoiIGZpbGw9InVybCgjYSkiLz48cGF0aCBkPSJNMTIuMzMgNi41OWEzLjA3IDMuMDcgMCAwMC01LjYxLjg1IDMuMTYgMy4xNiAwIDAwLjMzIDIuMjdsLTIuMzQgMi4zN2EuNzkuNzkgMCAwMDAgMS4xMi43OC43OCAwIDAwLjU2LjIzLjc2Ljc2IDAgMDAuNTYtLjIzbDIuMzMtMi4zNmEzLjE0IDMuMTQgMCAwMC44MS4zMyAzLjA4IDMuMDggMCAwMDMuMzYtNC41OHptLS41NCAyLjFhMi4xNiAyLjE2IDAgMDEtMi4wOSAxLjY1IDEuNzkgMS43OSAwIDAxLS41MS0uMDcgMS44NyAxLjg3IDAgMDEtLjctLjMyIDIuMTMgMi4xMyAwIDAxLS41Ni0uNTYgMi4xNyAyLjE3IDAgMDEtLjMxLTEuNzNBMi4xNCAyLjE0IDAgMDE5LjcgNmEyLjMxIDIuMzEgMCAwMS41Mi4wNiAyLjE4IDIuMTggMCAwMTEuMzIgMSAyLjEzIDIuMTMgMCAwMS4yNSAxLjYzeiIgZmlsbD0iI2YyZjJmMiIvPjxlbGxpcHNlIGN4PSI5LjY5IiBjeT0iOC4xOCIgcng9IjIuMTUiIHJ5PSIyLjE2IiBmaWxsPSIjODNiOWY5Ii8+PC9zdmc+"
+      catalog.cluster.local/maintainer: ""
+      catalog.cluster.local/url: "https://learn.microsoft.com/en-us/azure/search"
+      catalog.cluster.local/tags: "ai,unmanaged"
+  names:
+    kind: AzureAiSearchComposite
+    plural: azureaisearchcomposites
+  claimNames:
+    kind: AzureAiSearch
+    plural: azureaisearchs
+  versions:
+    - name: v1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          description: azureaisearch is the Schema for the azureaisearch API
+          type: object
+          properties:
+            spec:
+              description: azureaisearchSpec defines the desired state of azureaisearch
+              type: object
+              properties:
+                location:
+                  type: string
+                  description: "Azure location"
+                  display-name: "Location"
+                  enum:
+                    - "Switzerland North" # Zurich
+                    - "Germany West Central" # Frankfurt
+                    - "West Europe" # Netherlands
+                    - "Southeast Asia" # Singapore
+                  default: "Switzerland North"                
+                sku:
+                  type: string
+                  description: "Azure Pricing Tier" 
+                  display-name: "SKU"
+                  enum:
+                    - "free"
+                    - "standard"
+                    - "standard2"
+                    - "standard3"
+                  default: "standard"                
