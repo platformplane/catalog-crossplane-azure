@@ -28,5 +28,3 @@ spec:
       version: ">=v0.0.7"
     - function: xpkg.upbound.io/crossplane-contrib/function-sequencer
       version: ">=v0.1.2"    
-    - function: xpkg.upbound.io/upbound/provider-azure-search
-      version: ">=v1.6.1"
