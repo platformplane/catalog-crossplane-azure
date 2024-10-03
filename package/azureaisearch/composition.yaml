@@ -23,7 +23,7 @@ spec:
               ref:
                 name: azure-environment
 
-    - step: azure-openai
+    - step: azure-ai-search
       functionRef:
         name: crossplane-contrib-function-go-templating
       input:
@@ -53,7 +53,7 @@ spec:
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
                 location: {{ default "Switzerland North" $composite.spec.location }}               # called Region in Azure UI
                 publicNetworkAccessEnabled: true ## Disable when private endpoint is enabled
-                skuName: {{ default "standard" $composite.spec.sku }}
+                sku: {{ default "standard" $composite.spec.sku }}
                 tags:
                   source: crossplane
                   claim-name: {{ $claim.name }}
@@ -70,9 +70,7 @@ spec:
             {{ if eq $.observed.resources nil }}
             data: {}
             {{ else }}
-            data:
-              password: {{ index $account.connectionDetails "attribute.primary_access_key" }}
-              host: {{ $account.resource.status.atProvider.endpoint | b64enc }}
+            data: {}
             {{ end }}
 
     - step: automatically-detect-ready-composed-resources
@@ -88,4 +86,3 @@ spec:
         rules:
           - sequence:
             - "account"
-            - "endpoint"
