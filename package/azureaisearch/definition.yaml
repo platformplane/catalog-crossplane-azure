@@ -6,7 +6,7 @@ spec:
   group: catalog.cluster.local
   metadata:
     labels:
-      catalog.cluster.local/kind: AzureAiSearch
+      catalog.cluster.local/kind: AzureAISearch
     annotations:
       catalog.cluster.local/title: "Azure AI Search"
       catalog.cluster.local/description: "Azure AI Search is a cloud-based search service that uses machine learning to extract insights from unstructured data."
@@ -15,10 +15,10 @@ spec:
       catalog.cluster.local/url: "https://learn.microsoft.com/en-us/azure/search"
       catalog.cluster.local/tags: "ai,unmanaged"
   names:
-    kind: AzureAiSearchComposite
+    kind: AzureAISearchComposite
     plural: azureaisearchcomposites
   claimNames:
-    kind: AzureAiSearch
+    kind: AzureAISearch
     plural: azureaisearchs
   versions:
     - name: v1
