@@ -73,7 +73,8 @@ spec:
             data: 
               {{- $accountName := index $account.resource.metadata.annotations "crossplane.io/external-name" }}
               host: {{ printf "%s.search.windows.net" $accountName | b64enc }}
-              readOnlyQueryKey: {{ (index $account.resource.status.atProvider.queryKeys 0).key | b64enc }}
+              query-key: {{ (index $account.resource.status.atProvider.queryKeys 0).key | b64enc }}
+              password: {{ index $account.connectionDetails "attribute.primary_key" }}
             {{ end }}
 
     - step: automatically-detect-ready-composed-resources
