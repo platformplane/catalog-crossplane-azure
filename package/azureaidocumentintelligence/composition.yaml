@@ -1,0 +1,91 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: azureaidocumentintelligences.catalog.cluster.local
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.cluster.local/v1
+    kind: AzureAIDocumentIntelligenceComposite
+
+  writeConnectionSecretsToNamespace: crossplane-system
+
+  mode: Pipeline
+  pipeline:
+    - step: get-environment-configs
+      functionRef:
+        name: crossplane-contrib-function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Reference
+              ref:
+                name: azure-environment
+
+    - step: azure-document-intelligence
+      functionRef:
+        name: crossplane-contrib-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+
+            {{ $composite := $.observed.composite.resource }}
+            {{ $claim := $composite.spec.claimRef }}
+            {{ $account := $.observed.resources.account }}
+
+            apiVersion: cognitiveservices.azure.upbound.io/v1beta1
+            kind: Account
+            metadata:
+              name: {{ $claim.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: account
+            {{ if eq $claim nil }}
+                crossplane.io/external-name: {}
+            {{ else }}
+                crossplane.io/external-name: {{ regexReplaceAll "[^a-z0-9]" (printf "%s" $composite.metadata.uid | lower) "" | trunc 24 }}
+            {{ end }}
+            spec:
+              forProvider:
+                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                location: {{ default "Switzerland North" $composite.spec.location }}               # called Region in Azure UI
+                kind: FormRecognizer                                                               # Former name of Azure AI Document Intelligence
+                publicNetworkAccessEnabled: true                                                   # Disable when private endpoint is enabled
+                skuName: {{ default "S0" $composite.spec.sku }}
+                tags:
+                  source: crossplane
+                  claim-name: {{ $claim.name }}
+                  claim-kind: {{ $claim.kind }}
+                  claim-api-version: {{ $claim.apiVersion }}
+                  composite: {{ $composite.metadata.uid }}
+              writeConnectionSecretToRef:
+                namespace: {{ $claim.namespace }}
+                name: {{ $claim.name }}-connection
+
+            ---
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: CompositeConnectionDetails
+            {{ if eq $.observed.resources nil }}
+            data: {}
+            {{ else }}
+            data:
+              host: {{  $account.resource.status.atProvider.endpoint | b64enc }}
+              password: {{ index $account.connectionDetails "attribute.primary_access_key" }}
+            {{ end }}
+
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: crossplane-contrib-function-auto-ready
+
+    - step: enforce-creation-sequence
+      functionRef:
+        name: crossplane-contrib-function-sequencer
+      input:
+        apiVersion: sequencer.fn.crossplane.io/v1beta1
+        kind: Input
+        rules:
+          - sequence:
+            - "account"

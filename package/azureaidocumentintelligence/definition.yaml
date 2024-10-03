@@ -1,0 +1,52 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: azureaidocumentintelligencecomposites.catalog.cluster.local
+spec:
+  group: catalog.cluster.local
+  metadata:
+    labels:
+      catalog.cluster.local/kind: AzureAIDocumentIntelligence
+    annotations:
+      catalog.cluster.local/title: "Azure AI Document Intelligence"
+      catalog.cluster.local/description: "Azure AI Document Intelligence (Formerly known as Form Recognizer) is a cloud-based service that uses machine learning to extract text, key-value pairs, tables, and structured data from documents."
+      catalog.cluster.local/icon: "PHN2ZyB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiBoZWlnaHQ9IjE4IiB3aWR0aD0iMTgiIGFyaWEtaGlkZGVuPSJ0cnVlIiByb2xlPSJwcmVzZW50YXRpb24iIGZvY3VzYWJsZT0iZmFsc2UiPjxkZWZzPjxzeW1ib2wgdmlld0JveD0iMCAwIDE4IDE4IiBjbGFzcz0iIiByb2xlPSJwcmVzZW50YXRpb24iIGZvY3VzYWJsZT0iZmFsc2UiIHhtbG5zOnN2Zz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiBpZD0iRnhTeW1ib2wwLTAyOCIgZGF0YS10eXBlPSIxIj48Zz48dGl0bGU+PC90aXRsZT48ZGVmcz48L2RlZnM+PHBhdGggZD0iTTguODI0LjEzMkgxLjMxMWEuNTk0LjU5NCAwIDAgMC0uNTkzLjU5NHYxNi4yYS41OTQuNTk0IDAgMCAwIC41OTMuNTk0aDEzLjAyMWEuNTk0LjU5NCAwIDAgMCAuNTkzLS41OTRWNi4yMDVhLjU5NC41OTQgMCAwIDAtLjU5My0uNTk0SDEwLjAxYS41OTQuNTk0IDAgMCAxLS41OTMtLjU5NFYuNzI2YS41OTMuNTkzIDAgMCAwLS41OTMtLjU5NFoiIGZpbGw9IiM4M2I5ZjkiPjwvcGF0aD48cGF0aCBkPSJNOC41NS44OXY0LjA3YTEuNDk0IDEuNDk0IDAgMCAwIDEuNDkxIDEuNDkzaDQuMXYxMC4zMUgxLjVWLjg5aDcuMDVNOC44MzcgMEgxLjIxNWEuNi42IDAgMCAwLS42LjZ2MTYuNDVhLjYuNiAwIDAgMCAuNi42aDEzLjIxM2EuNi42IDAgMCAwIC42LS42VjYuMTY1YS42LjYgMCAwIDAtLjYtLjZoLTQuMzg3YS42LjYgMCAwIDEtLjYtLjZWLjZhLjYuNiAwIDAgMC0uNi0uNloiIGZpbGw9InVybCgjZTc2YmNlNWEtZGE0YS00N2NiLWI1MzktYTU3MWUzMTlhMDMyKSI+PC9wYXRoPjxwYXRoIGQ9Ik0xNC44IDUuNjgzIDkuMjMyLjEzMnY0LjUyM2ExLjAyMiAxLjAyMiAwIDAgMCAxLjAxNSAxLjAyOFoiIGZpbGw9IiMwMDc4ZDQiPjwvcGF0aD48cmVjdCB4PSIyLjY4NiIgeT0iOC4zMjkiIHdpZHRoPSI5LjcxMyIgaGVpZ2h0PSIxLjM2IiByeD0iLjU2NyIgY2xhc3M9Im1zcG9ydGFsZngtc3ZnLWMwMSI+PC9yZWN0PjxyZWN0IHg9IjIuNjg2IiB5PSIxMS4wODMiIHdpZHRoPSI5LjcxMyIgaGVpZ2h0PSIxLjM2IiByeD0iLjU2NyIgb3BhY2l0eT0iLjgiIGNsYXNzPSJtc3BvcnRhbGZ4LXN2Zy1jMDEiPjwvcmVjdD48cmVjdCB4PSIyLjY4NiIgeT0iMTMuODM4IiB3aWR0aD0iOS43MTMiIGhlaWdodD0iMS4zNiIgcng9Ii41NjciIG9wYWNpdHk9Ii42IiBjbGFzcz0ibXNwb3J0YWxmeC1zdmctYzAxIj48L3JlY3Q+PGcgZmlsbD0iIzUwZTZmZiI+PHBhdGggZD0iTTEyLjcxIDE3Ljc4N2MtMi4wNzYgMC0zLjc4My0xLjYtNC42ODUtNC40YTQ1LjU3OCA0NS41NzggMCAwIDAtMS45NzMtNC4yNjljMS4zMi4wMTQgNS45MzUuMDYzIDYuODE4LjA2MyAyLjExMiAwIDMuNzQ5IDIuNTI0IDMuNzQ5IDQuN2EzLjkxNCAzLjkxNCAwIDAgMS0zLjkwOSAzLjkwNloiPjwvcGF0aD48cGF0aCBkPSJNNi40IDkuMzM1YzEuNjQ0LjAxNyA1LjY1Ni4wNTkgNi40NjkuMDU5IDEuOTkyIDAgMy41MzYgMi40MSAzLjUzNiA0LjQ4M2EzLjcgMy43IDAgMCAxLTMuNyAzLjdjLTEuOTc3IDAtMy42MTEtMS41NS00LjQ4My00LjI1M0E0MS4yNzIgNDEuMjcyIDAgMCAwIDYuNCA5LjMzNU01LjcgOC45czEuNzM5IDMuMzY2IDIuMTIxIDQuNTVDOC43IDE2LjE3NCAxMC40MzMgMTggMTIuNzEgMThhNC4xMjMgNC4xMjMgMCAwIDAgNC4xMjMtNC4xMjNjMC0yLjI3Ny0xLjY4NS00LjkxLTMuOTYzLTQuOTEtMS4wMzMgMC03LjE3LS4wNjctNy4xNy0uMDY3WiI+PC9wYXRoPjwvZz48Y2lyY2xlIGN4PSIxMi44NyIgY3k9IjEzLjQ4NCIgcj0iNC41MTYiIGNsYXNzPSJtc3BvcnRhbGZ4LXN2Zy1jMDEiPjwvY2lyY2xlPjxwYXRoIGQ9Ik0xMi44NyA5LjQ0NmE0LjAzOCA0LjAzOCAwIDEgMS00LjAzNyA0LjAzOCA0LjA0MiA0LjA0MiAwIDAgMSA0LjAzNy00LjAzOG0wLS40NzlhNC41MTcgNC41MTcgMCAxIDAgNC41MTcgNC41MTcgNC41MTYgNC41MTYgMCAwIDAtNC41MTctNC41MTdaIiBmaWxsPSIjNTBlNmZmIj48L3BhdGg+PHBhdGggZD0iTTEyLjMyNCAxMi45aC0xLjQ1OHYtMS40NmgxLjQ1OFptMi41NTEtMS40NThoLTEuNDU4VjEyLjloMS40NThaTTEyLjMyNCAxNGgtMS40NTh2MS40NThoMS40NThabTIuNTUxIDBoLTEuNDU4djEuNDU4aDEuNDU4WiIgZmlsbD0iIzUwZTZmZiI+PC9wYXRoPjwvZz48L3N5bWJvbD48L2RlZnM+PHVzZSBocmVmPSIjRnhTeW1ib2wwLTAyOCIgZmlsbD0iI0YzRjJGMSI+PC91c2U+PC9zdmc+"
+      catalog.cluster.local/maintainer: ""
+      catalog.cluster.local/url: "https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence"
+      catalog.cluster.local/tags: "ai,unmanaged"
+  names:
+    kind: AzureAIDocumentIntelligenceComposite
+    plural: azureaidocumentintelligencecomposites
+  claimNames:
+    kind: AzureAIDocumentIntelligence
+    plural: azureaidocumentintelligences
+  versions:
+    - name: v1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          description: azureaidocumentintelligence is the Schema for the azureaidocumentintelligence API
+          type: object
+          properties:
+            spec:
+              description: azureaidocumentintelligenceSpec defines the desired state of azureaidocumentintelligence
+              type: object
+              properties:
+                location:
+                  type: string
+                  description: "Azure location"
+                  display-name: "Location"
+                  enum:
+                    - "Switzerland North" # Zurich
+                    - "Germany West Central" # Frankfurt
+                    - "West Europe" # Netherlands
+                    - "Southeast Asia" # Singapore
+                  default: "Switzerland North"
+                sku:
+                  type: string
+                  description: "Azure Pricing Tier"
+                  display-name: "SKU"
+                  enum:     # F0 is not selectable here, because it could lead to errors as it can only be present once per subscription.
+                    - "S0"
+                  default: "S0"
