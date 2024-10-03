@@ -42,7 +42,7 @@ spec:
             metadata:
               name: {{ $claim.name }}
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: account
+                gotemplating.fn.crossplane.io/composition-resource-name: service
             {{ if eq $claim nil }}
                 crossplane.io/external-name: {}
             {{ else }}
@@ -77,12 +77,12 @@ spec:
       functionRef:
         name: crossplane-contrib-function-auto-ready
 
-    - step: enforce-creation-sequence
-      functionRef:
-        name: crossplane-contrib-function-sequencer
-      input:
-        apiVersion: sequencer.fn.crossplane.io/v1beta1
-        kind: Input
-        rules:
-          - sequence:
-            - "account"
+    # - step: enforce-creation-sequence
+    #   functionRef:
+    #     name: crossplane-contrib-function-sequencer
+    #   input:
+    #     apiVersion: sequencer.fn.crossplane.io/v1beta1
+    #     kind: Input
+    #     rules:
+    #       - sequence:
+    #         - "account"
