@@ -47,9 +47,8 @@ spec:
                   type: string
                   description: "Azure Pricing Tier" 
                   display-name: "SKU"
-                  enum:
-                    - "free"
-                    - "standard"
+                  enum:  # free tier is not selectable here, because it could lead to errors as it can only be present once per subscription.
+                    - "standard" 
                     - "standard2"
                     - "standard3"
                   default: "standard"                
