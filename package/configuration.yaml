@@ -27,4 +27,4 @@ spec:
     - function: xpkg.upbound.io/crossplane-contrib/function-environment-configs
       version: ">=v0.0.7"
     - function: xpkg.upbound.io/crossplane-contrib/function-sequencer
-      version: ">=v0.1.2"    
+      version: ">=v0.1.2"

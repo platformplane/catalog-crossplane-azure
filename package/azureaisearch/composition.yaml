@@ -70,7 +70,7 @@ spec:
             {{ if eq $.observed.resources nil }}
             data: {}
             {{ else }}
-            data: 
+            data:
               {{- $accountName := index $account.resource.metadata.annotations "crossplane.io/external-name" }}
               host: {{ printf "%s.search.windows.net" $accountName | b64enc }}
               query-key: {{ (index $account.resource.status.atProvider.queryKeys 0).key | b64enc }}

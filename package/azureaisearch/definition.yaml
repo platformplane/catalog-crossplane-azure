@@ -42,13 +42,13 @@ spec:
                     - "Germany West Central" # Frankfurt
                     - "West Europe" # Netherlands
                     - "Southeast Asia" # Singapore
-                  default: "Switzerland North"                
+                  default: "Switzerland North"
                 sku:
                   type: string
-                  description: "Azure Pricing Tier" 
+                  description: "Azure Pricing Tier"
                   display-name: "SKU"
                   enum:  # free tier is not selectable here, because it could lead to errors as it can only be present once per subscription.
-                    - "standard" 
+                    - "standard"
                     - "standard2"
                     - "standard3"
-                  default: "standard"                
+                  default: "standard"
