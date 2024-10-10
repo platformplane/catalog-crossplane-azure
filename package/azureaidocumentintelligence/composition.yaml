@@ -53,7 +53,8 @@ spec:
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
                 location: {{ default "Switzerland North" $composite.spec.location }}               # called Region in Azure UI
                 kind: FormRecognizer                                                               # Former name of Azure AI Document Intelligence
-                publicNetworkAccessEnabled: true                                                   # Disable when private endpoint is enabled
+                publicNetworkAccessEnabled: false                                                   # Disable when private endpoint is enabled
+                customSubdomainName: {{ $composite.metadata.uid }}
                 skuName: {{ default "S0" $composite.spec.sku }}
                 tags:
                   source: crossplane
@@ -64,6 +65,37 @@ spec:
               writeConnectionSecretToRef:
                 namespace: {{ $claim.namespace }}
                 name: {{ $claim.name }}-connection
+
+            ---
+            apiVersion: network.azure.upbound.io/v1beta1
+            kind: PrivateEndpoint
+            metadata:
+              name: {{ $claim.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: endpoint
+                crossplane.io/external-name: {{ $claim.name }}
+            spec:
+              forProvider:
+                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                subnetId: "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $.context "apiextensions.crossplane.io/environment" "network-name" }}/subnets/default"
+                location: {{ index $.context "apiextensions.crossplane.io/environment" "network-location" }} # needs to be the same region as the network
+                customNetworkInterfaceName: {{ $claim.name }}-nic
+                privateServiceConnection:
+                  - isManualConnection: false
+                    name: {{ $claim.name }}
+                    privateConnectionResourceId: {{ $account.resource.status.atProvider.id }}
+                    subresourceNames:
+                      - account
+                privateDnsZoneGroup:
+                  - name: default
+                    privateDnsZoneIds:
+                      - "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/cognitiveservices.azure.com"
+                tags:
+                  source: crossplane
+                  claim-name: {{ $claim.name }}
+                  claim-kind: {{ $claim.kind }}
+                  claim-api-version: {{ $claim.apiVersion }}
+                  composite: {{ $composite.metadata.uid }}
 
             ---
             apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
@@ -89,3 +121,4 @@ spec:
         rules:
           - sequence:
             - "account"
+            - "endpoint"
