@@ -159,9 +159,9 @@ spec:
         rules:
           - sequence:
             - "account"
-            - "deploymentllm"
             - "endpoint"
+            - "deploymentllm"
           - sequence:
             - "account"
-            - "deploymentembed"
             - "endpoint"
+            - "deploymentembed"
