@@ -65,7 +65,7 @@ spec:
               writeConnectionSecretToRef:
                 namespace: {{ $claim.namespace }}
                 name: {{ $claim.name }}-connection
-            
+
             ---
             apiVersion: cognitiveservices.azure.upbound.io/v1beta1
             kind: Deployment
@@ -77,7 +77,7 @@ spec:
             spec:
               forProvider:
                 cognitiveAccountId: {{ $account.resource.status.atProvider.id }}
-                model:        
+                model:
                   - format: OpenAI
                     name: "gpt-4o"
                     version: "2024-05-13"
@@ -96,7 +96,7 @@ spec:
             spec:
               forProvider:
                 cognitiveAccountId: {{ $account.resource.status.atProvider.id }}
-                model:        
+                model:
                   - format: OpenAI
                     name: text-embedding-3-large
                     version: "1"
@@ -116,14 +116,14 @@ spec:
               forProvider:
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
                 subnetId: "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $.context "apiextensions.crossplane.io/environment" "network-name" }}/subnets/default"
-                location: {{ default "Switzerland North" $composite.spec.location }}
+                location: {{ index $.context "apiextensions.crossplane.io/environment" "network-location" }} # needs to be the same region as the network
                 customNetworkInterfaceName: {{ $claim.name }}-nic
                 privateServiceConnection:
                   - isManualConnection: false
                     name: {{ $claim.name }}
                     privateConnectionResourceId: {{ $account.resource.status.atProvider.id }}
                     subresourceNames:
-                      - account     
+                      - account
                 privateDnsZoneGroup:
                   - name: default
                     privateDnsZoneIds:
