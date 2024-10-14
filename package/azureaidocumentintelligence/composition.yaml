@@ -36,6 +36,7 @@ spec:
             {{ $composite := $.observed.composite.resource }}
             {{ $claim := $composite.spec.claimRef }}
             {{ $account := $.observed.resources.account }}
+            {{ $accountid := regexReplaceAll "[^a-z0-9]" (printf "%s" $composite.metadata.uid | lower) "" | trunc 24 }}
 
             apiVersion: cognitiveservices.azure.upbound.io/v1beta1
             kind: Account
@@ -46,15 +47,15 @@ spec:
             {{ if eq $claim nil }}
                 crossplane.io/external-name: {}
             {{ else }}
-                crossplane.io/external-name: {{ regexReplaceAll "[^a-z0-9]" (printf "%s" $composite.metadata.uid | lower) "" | trunc 24 }}
+                crossplane.io/external-name: {{ $accountid }}
             {{ end }}
             spec:
               forProvider:
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
                 location: {{ default "Switzerland North" $composite.spec.location }}               # called Region in Azure UI
                 kind: FormRecognizer                                                               # Former name of Azure AI Document Intelligence
-                publicNetworkAccessEnabled: false                                                   # Disable when private endpoint is enabled
-                customSubdomainName: {{ $composite.metadata.uid }}
+                publicNetworkAccessEnabled: false                                                  # Disable when private endpoint is enabled
+                customSubdomainName: {{ $accountid }}
                 skuName: {{ default "S0" $composite.spec.sku }}
                 tags:
                   source: crossplane
