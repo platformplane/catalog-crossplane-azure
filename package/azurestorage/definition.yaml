@@ -40,6 +40,7 @@ spec:
                   enum:
                     - "Switzerland North"
                     - "Southeast Asia"
+                    - "Germany West Central" # Frankfurt
                   default: "Switzerland North"
                 accountReplicationType:
                   type: string

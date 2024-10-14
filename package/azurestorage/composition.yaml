@@ -78,7 +78,7 @@ spec:
               forProvider:
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
                 subnetId: "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $.context "apiextensions.crossplane.io/environment" "network-name" }}/subnets/default"
-                location: {{ default "Switzerland North" $composite.spec.location }}
+                location: {{ index $.context "apiextensions.crossplane.io/environment" "network-location" }} # needs to be the same region as the network
                 customNetworkInterfaceName: {{ $claim.name }}-blob-nic
                 privateServiceConnection:
                   - isManualConnection: false
@@ -96,7 +96,7 @@ spec:
                   claim-kind: {{ $claim.kind }}
                   claim-api-version: {{ $claim.apiVersion }}
                   composite: {{ $composite.metadata.uid }}
-        
+
             ---
             apiVersion: network.azure.upbound.io/v1beta1
             kind: PrivateEndpoint
@@ -109,7 +109,7 @@ spec:
               forProvider:
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
                 subnetId: "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $.context "apiextensions.crossplane.io/environment" "network-name" }}/subnets/default"
-                location: {{ default "Switzerland North" $composite.spec.location }}
+                location: {{ index $.context "apiextensions.crossplane.io/environment" "network-location" }} # needs to be the same region as the network
                 customNetworkInterfaceName: {{ $claim.name }}-file-nic
                 privateServiceConnection:
                   - isManualConnection: false
