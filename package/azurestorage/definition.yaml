@@ -41,6 +41,7 @@ spec:
                     - "Switzerland North"
                     - "Southeast Asia"
                     - "Germany West Central" # Frankfurt
+                    - "West Europe" # Netherlands
                   default: "Switzerland North"
                 accountReplicationType:
                   type: string
