@@ -41,7 +41,6 @@ spec:
                     - "Switzerland North" # Zurich
                     - "Germany West Central" # Frankfurt
                     - "West Europe" # Netherlands
-                    - "Southeast Asia" # Singapore
                   default: "Switzerland North"
                 sku:
                   type: string
@@ -49,6 +48,8 @@ spec:
                   display-name: "SKU"
                   enum:  # free tier is not selectable here, because it could lead to errors as it can only be present once per subscription.
                     - "standard"
-                    - "standard2"
-                    - "standard3"
                   default: "standard"
+                public:
+                  type: boolean
+                  description: "Expose public endpoint (Be aware that your application will be public available on the internet.)"
+                  default: false

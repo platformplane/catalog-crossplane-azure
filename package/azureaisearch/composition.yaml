@@ -36,6 +36,8 @@ spec:
             {{ $composite := $.observed.composite.resource }}
             {{ $claim := $composite.spec.claimRef }}
             {{ $account := $.observed.resources.account }}
+            {{ $accountId := regexReplaceAll "[^a-z0-9]" (printf "%s" $composite.metadata.uid | lower) "" | trunc 24 }}
+            {{ $resourceName := $claim.name + "-" + $accountId }}
 
             apiVersion: search.azure.upbound.io/v1beta1
             kind: Service
@@ -46,13 +48,13 @@ spec:
             {{ if eq $claim nil }}
                 crossplane.io/external-name: {}
             {{ else }}
-                crossplane.io/external-name: {{ regexReplaceAll "[^a-z0-9]" (printf "%s" $composite.metadata.uid | lower) "" | trunc 24 }}
+                crossplane.io/external-name: srch-{{ $resourceName }}
             {{ end }}
             spec:
               forProvider:
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
                 location: {{ default "Switzerland North" $composite.spec.location }}               # called Region in Azure UI
-                publicNetworkAccessEnabled: true ## Disable when private endpoint is enabled
+                publicNetworkAccessEnabled: {{ default "false" $composite.spec.public }}
                 sku: {{ default "standard" $composite.spec.sku }}
                 tags:
                   source: crossplane
@@ -65,6 +67,37 @@ spec:
                 name: {{ $claim.name }}-connection
 
             ---
+            apiVersion: network.azure.upbound.io/v1beta1
+            kind: PrivateEndpoint
+            metadata:
+              name: {{ $claim.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: endpoint
+                crossplane.io/external-name: pep-{{ $resourceName }}
+            spec:
+              forProvider:
+                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                subnetId: "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $.context "apiextensions.crossplane.io/environment" "network-name" }}/subnets/default"
+                location: {{ default "Switzerland North" $composite.spec.location }}
+                customNetworkInterfaceName: nic-{{ $resourceName }}
+                privateServiceConnection:
+                  - isManualConnection: false
+                    name: {{ $claim.name }}
+                    privateConnectionResourceId: {{ $account.resource.status.atProvider.id }}
+                    subresourceNames:
+                      - searchService
+                privateDnsZoneGroup:
+                  - name: default
+                    privateDnsZoneIds:
+                      - "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/search.windows.net"
+                tags:
+                  source: crossplane
+                  claim-name: {{ $claim.name }}
+                  claim-kind: {{ $claim.kind }}
+                  claim-api-version: {{ $claim.apiVersion }}
+                  composite: {{ $composite.metadata.uid }}
+
+            ---
             apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
             kind: CompositeConnectionDetails
             {{ if eq $.observed.resources nil }}
@@ -74,6 +107,7 @@ spec:
               {{- $accountName := index $account.resource.metadata.annotations "crossplane.io/external-name" }}
               host: {{ printf "%s.search.windows.net" $accountName | b64enc }}
               query-key: {{ (index $account.resource.status.atProvider.queryKeys 0).key | b64enc }}
+              public: {{ printf "%t" $account.resource.status.atProvider.publicNetworkAccessEnabled | b64enc }}
               password: {{ index $account.connectionDetails "attribute.primary_key" }}
             {{ end }}
 
