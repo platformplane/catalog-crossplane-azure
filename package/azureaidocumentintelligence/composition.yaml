@@ -55,7 +55,7 @@ spec:
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
                 location: {{ default "Switzerland North" $composite.spec.location }}               # called Region in Azure UI
                 kind: FormRecognizer                                                               # Former name of Azure AI Document Intelligence
-                publicNetworkAccessEnabled: false                                                  # Disable when private endpoint is enabled
+                publicNetworkAccessEnabled: {{ default "false" $composite.spec.public }}
                 customSubdomainName: {{ $accountid }}
                 skuName: {{ default "S0" $composite.spec.sku }}
                 tags:
@@ -108,6 +108,7 @@ spec:
             data:
               host: {{  $account.resource.status.atProvider.endpoint | b64enc }}
               password: {{ index $account.connectionDetails "attribute.primary_access_key" }}
+              public: {{ printf "%t" $account.resource.status.atProvider.publicNetworkAccessEnabled | b64enc }}
             {{ end }}
 
     - step: automatically-detect-ready-composed-resources

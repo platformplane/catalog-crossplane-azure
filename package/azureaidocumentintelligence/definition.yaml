@@ -50,3 +50,7 @@ spec:
                   enum:     # F0 is not selectable here, because it could lead to errors as it can only be present once per subscription.
                     - "S0"
                   default: "S0"
+                public:
+                  type: boolean
+                  description: "Expose public endpoint (Be aware that your application will be public available on the internet.)"
+                  default: false
