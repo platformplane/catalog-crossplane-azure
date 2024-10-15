@@ -54,7 +54,7 @@ spec:
                 location: {{ default "Switzerland North" $composite.spec.location }}               # called Region in Azure UI
                 accountReplicationType: {{ default "LRS" $composite.spec.accountReplicationType }} # called Replication in Azure UI
                 accountTier: {{ default "Standard" $composite.spec.accountTier }}                  # called Performance in Azure UI
-                publicNetworkAccessEnabled: false
+                publicNetworkAccessEnabled: {{ default "false" $composite.spec.public }}
                 allowNestedItemsToBePublic: false
                 tags:
                   source: crossplane
@@ -140,6 +140,7 @@ spec:
               blob-host: {{ printf "%s.blob.core.windows.net" $accountName | b64enc }}
               file-host: {{ printf "%s.file.core.windows.net" $accountName | b64enc }}
               username: {{ $accountName | b64enc }}
+              public: {{ printf "%t" $account.resource.status.atProvider.publicNetworkAccessEnabled | b64enc }}
               {{ if ne $account.connectionDetails nil }}
               password: {{ index $account.connectionDetails "attribute.primary_access_key" }}
               uri: {{ trimPrefix "DefaultEndpointsProtocol=https;BlobEndpoint=" (index $account.connectionDetails "attribute.primary_blob_connection_string" | b64dec) | b64enc }}
