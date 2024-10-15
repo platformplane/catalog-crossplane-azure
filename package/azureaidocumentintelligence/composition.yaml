@@ -37,6 +37,7 @@ spec:
             {{ $claim := $composite.spec.claimRef }}
             {{ $account := $.observed.resources.account }}
             {{ $accountid := regexReplaceAll "[^a-z0-9]" (printf "%s" $composite.metadata.uid | lower) "" | trunc 24 }}
+            {{ $resourceName := printf "%s-%s" $claim.name $accountid }}
 
             apiVersion: cognitiveservices.azure.upbound.io/v1beta1
             kind: Account
@@ -47,7 +48,7 @@ spec:
             {{ if eq $claim nil }}
                 crossplane.io/external-name: {}
             {{ else }}
-                crossplane.io/external-name: {{ $accountid }}
+                crossplane.io/external-name: di-{{ $resourceName }}
             {{ end }}
             spec:
               forProvider:
@@ -74,13 +75,13 @@ spec:
               name: {{ $claim.name }}
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: endpoint
-                crossplane.io/external-name: {{ $claim.name }}
+                crossplane.io/external-name: pep-{{ $resourceName }}
             spec:
               forProvider:
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
                 subnetId: "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $.context "apiextensions.crossplane.io/environment" "network-name" }}/subnets/default"
                 location: {{ index $.context "apiextensions.crossplane.io/environment" "network-location" }} # needs to be the same region as the network
-                customNetworkInterfaceName: {{ $claim.name }}-nic
+                customNetworkInterfaceName: nic-{{ $resourceName }}
                 privateServiceConnection:
                   - isManualConnection: false
                     name: {{ $claim.name }}
