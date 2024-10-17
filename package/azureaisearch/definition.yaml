@@ -44,10 +44,13 @@ spec:
                   default: "Switzerland North"
                 sku:
                   type: string
-                  description: "Azure Pricing Tier"
+                  description: "Azure Search SKU (basic = 'Basic', standard = 'Standard S1', standard2 = 'Standard S2', standard3 = 'Standard S3'). Check the Azure Pricing page for more information: https://azure.microsoft.com/en-us/pricing/details/search/#pricing"
                   display-name: "SKU"
                   enum:  # free tier is not selectable here, because it could lead to errors as it can only be present once per subscription.
+                    - "basic"
                     - "standard"
+                    - "standard2"
+                    - "standard3"
                   default: "standard"
                 public:
                   type: boolean
