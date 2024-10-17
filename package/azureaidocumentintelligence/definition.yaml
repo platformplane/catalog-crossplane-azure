@@ -45,7 +45,7 @@ spec:
                   default: "Switzerland North"
                 sku:
                   type: string
-                  description: "Azure Pricing Tier"
+                  description: "Azure SKU (S0 = 'Standard S0'). Check the Azure Pricing page for more information: https://azure.microsoft.com/en-us/pricing/details/ai-document-intelligence/#pricing"
                   display-name: "SKU"
                   enum:     # F0 is not selectable here, because it could lead to errors as it can only be present once per subscription.
                     - "S0"
