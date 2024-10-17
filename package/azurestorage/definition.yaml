@@ -40,6 +40,8 @@ spec:
                   enum:
                     - "Switzerland North"
                     - "Southeast Asia"
+                    - "Germany West Central" # Frankfurt
+                    - "West Europe" # Netherlands
                   default: "Switzerland North"
                 accountReplicationType:
                   type: string
@@ -53,3 +55,7 @@ spec:
                     - "GZRS"
                     - "RAZRS"
                   default: "LRS"
+                public:
+                  type: boolean
+                  description: "Expose public endpoint (Be aware that your application will be public available on the internet.)"
+                  default: false
