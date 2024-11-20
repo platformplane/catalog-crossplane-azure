@@ -3,7 +3,7 @@
 version: '3'
 
 vars:
-  REPOSITORY: index.docker.io/platformplane/platform-catalog-azure:0.0.3
+  REPOSITORY: index.docker.io/platformplane/platform-catalog-azure:v0.2.3
 
 tasks:
   publish:
