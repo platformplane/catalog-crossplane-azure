@@ -35,7 +35,7 @@ spec:
               properties:
                 location:
                   type: string
-                  description: "Azure location for the storage account"
+                  description: "Azure location"
                   display-name: "Location"
                   enum:
                     # - "Switzerland North"

@@ -1,0 +1,127 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: azureaidocumentintelligences.catalog.cluster.local
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.cluster.local/v1
+    kind: AzureAIDocumentIntelligenceComposite
+
+  writeConnectionSecretsToNamespace: crossplane-system
+
+  mode: Pipeline
+  pipeline:
+    - step: get-environment-configs
+      functionRef:
+        name: crossplane-contrib-function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Reference
+              ref:
+                name: azure-environment
+
+    - step: azure-document-intelligence
+      functionRef:
+        name: crossplane-contrib-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+
+            {{ $composite := $.observed.composite.resource }}
+            {{ $claim := $composite.spec.claimRef }}
+            {{ $account := $.observed.resources.account }}
+            {{ $accountid := regexReplaceAll "[^a-z0-9]" (printf "%s" $composite.metadata.uid | lower) "" | trunc 24 }}
+            {{ $resourceName := printf "%s-%s" $claim.name $accountid }}
+
+            apiVersion: cognitiveservices.azure.upbound.io/v1beta1
+            kind: Account
+            metadata:
+              name: {{ $claim.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: account
+            {{ if eq $claim nil }}
+                crossplane.io/external-name: {}
+            {{ else }}
+                crossplane.io/external-name: di-{{ $resourceName }}
+            {{ end }}
+            spec:
+              forProvider:
+                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                location: {{ default "Switzerland North" $composite.spec.location }}               # called Region in Azure UI
+                kind: FormRecognizer                                                               # Former name of Azure AI Document Intelligence
+                publicNetworkAccessEnabled: {{ default "false" $composite.spec.public }}
+                customSubdomainName: {{ $accountid }}
+                skuName: {{ default "S0" $composite.spec.sku }}
+                tags:
+                  source: crossplane
+                  claim-name: {{ $claim.name }}
+                  claim-kind: {{ $claim.kind }}
+                  claim-api-version: {{ $claim.apiVersion }}
+                  composite: {{ $composite.metadata.uid }}
+              writeConnectionSecretToRef:
+                namespace: {{ $claim.namespace }}
+                name: {{ $claim.name }}-connection
+
+            ---
+            apiVersion: network.azure.upbound.io/v1beta1
+            kind: PrivateEndpoint
+            metadata:
+              name: {{ $claim.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: endpoint
+                crossplane.io/external-name: pep-{{ $resourceName }}
+            spec:
+              forProvider:
+                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                subnetId: "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $.context "apiextensions.crossplane.io/environment" "network-name" }}/subnets/default"
+                location: {{ index $.context "apiextensions.crossplane.io/environment" "network-location" }} # needs to be the same region as the network
+                customNetworkInterfaceName: nic-{{ $resourceName }}
+                privateServiceConnection:
+                  - isManualConnection: false
+                    name: {{ $claim.name }}
+                    privateConnectionResourceId: {{ $account.resource.status.atProvider.id }}
+                    subresourceNames:
+                      - account
+                privateDnsZoneGroup:
+                  - name: default
+                    privateDnsZoneIds:
+                      - "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/cognitiveservices.azure.com"
+                tags:
+                  source: crossplane
+                  claim-name: {{ $claim.name }}
+                  claim-kind: {{ $claim.kind }}
+                  claim-api-version: {{ $claim.apiVersion }}
+                  composite: {{ $composite.metadata.uid }}
+
+            ---
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: CompositeConnectionDetails
+            {{ if eq $.observed.resources nil }}
+            data: {}
+            {{ else }}
+            data:
+              host: {{  $account.resource.status.atProvider.endpoint | b64enc }}
+              password: {{ index $account.connectionDetails "attribute.primary_access_key" }}
+              public: {{ printf "%t" $account.resource.status.atProvider.publicNetworkAccessEnabled | b64enc }}
+            {{ end }}
+
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: crossplane-contrib-function-auto-ready
+
+    - step: enforce-creation-sequence
+      functionRef:
+        name: crossplane-contrib-function-sequencer
+      input:
+        apiVersion: sequencer.fn.crossplane.io/v1beta1
+        kind: Input
+        rules:
+          - sequence:
+            - "account"
+            - "endpoint"
