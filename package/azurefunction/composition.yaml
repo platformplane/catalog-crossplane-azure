@@ -1,0 +1,320 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: azurefunctions.catalog.cluster.local
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.cluster.local/v2
+    kind: AzureFunction
+
+  mode: Pipeline
+  pipeline:
+    - step: get-environment-configs
+      functionRef:
+        name: crossplane-contrib-function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Reference
+              ref:
+                name: azure-environment
+
+    - step: function-app
+      functionRef:
+        name: crossplane-contrib-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+
+            {{ $xr := .observed.composite.resource }}
+            {{ $xrName := $xr.metadata.name }}
+            {{ $namespace := $xr.metadata.namespace }}
+            {{ $params := $xr.spec.parameters }}
+            {{ $environment := index $.context "apiextensions.crossplane.io/environment" }}
+
+            {{/* crossplane-azure-operator only publishes app-service-subnet-id once the App Service
+                 integration subnet exists in this cluster's virtual network and carries the
+                 Microsoft.Web/serverFarms delegation. Fail the render while it is absent: a missing key
+                 would otherwise resolve to empty and produce a Function App with no VNet integration,
+                 which cannot reach its private-endpoint-only host storage. */}}
+            {{ $appServiceSubnetID := dig "app-service-subnet-id" "" $environment | required "app-service-subnet-id is not published in the azure-environment EnvironmentConfig: the App Service integration subnet for this cluster's virtual network is not ready yet" }}
+            {{ $location := default "Switzerland North" $params.location }}
+            {{ $imagePattern := "^([^/]+)/(.+):([^/:]+)$" }}
+            {{ $registryHost := regexReplaceAll $imagePattern $params.image "${1}" }}
+            {{ $imageName := regexReplaceAll $imagePattern $params.image "${2}" }}
+            {{ $imageTag := regexReplaceAll $imagePattern $params.image "${3}" }}
+            {{ $resourceIdentity := default $xrName (printf "%s" $xr.metadata.uid) }}
+            {{ $resourceLabel := $resourceIdentity }}
+            {{ $uid := regexReplaceAll "[^a-z0-9]" ($resourceIdentity | lower) "" }}
+            {{ $functionName := printf "fn-%s" $uid }}
+            {{ $planResourceName := printf "%s-plan" $functionName }}
+            {{ $storageLabel := printf "%s-storage" $xrName }}
+            {{ if gt (len $storageLabel) 55 }}
+            {{ $storageLabel = printf "%s-%s-storage" ($xrName | trunc 38 | trimSuffix "-") ($uid | trunc 8) }}
+            {{ end }}
+            {{ $storageAccountResourceName := printf "%s-account" $storageLabel }}
+            {{ $storageAccountExternalName := regexReplaceAll "[^a-z0-9]" (printf "%s" $xr.metadata.uid | lower) "" | trunc 24 }}
+            {{ $connectionSecretName := printf "%s-connection" $xrName }}
+            {{ if gt (len $connectionSecretName) 63 }}
+            {{ $connectionSecretName = printf "%s-%s-connection" ($xrName | trunc 43 | trimSuffix "-") ($uid | trunc 8) }}
+            {{ end }}
+            {{ $appSettings := dict }}
+            {{ range $variable := default (list) $params.environmentVariables }}
+            {{ $_ := set $appSettings $variable.key $variable.value }}
+            {{ end }}
+            {{ $_ := set $appSettings "WEBSITES_ENABLE_APP_SERVICE_STORAGE" "false" }}
+
+            {{/* Read back what was observed of our own composed resources on the previous reconcile. */}}
+            {{ $account := dig "resources" "account" "resource" dict .observed }}
+            {{ $accountID := dig "status" "atProvider" "id" "" $account }}
+            {{ $function := dig "resources" "function-app" "resource" dict .observed }}
+            {{ $identity := dig "status" "atProvider" "identity" "" $function }}
+            {{ $functionPrincipalID := "" }}
+            {{ if kindIs "slice" $identity }}
+            {{ if gt (len $identity) 0 }}
+            {{ $functionPrincipalID = dig "principalId" "" (index $identity 0) }}
+            {{ end }}
+            {{ else if kindIs "map" $identity }}
+            {{ $functionPrincipalID = dig "principalId" "" $identity }}
+            {{ end }}
+
+            apiVersion: web.azure.m.upbound.io/v1beta1
+            kind: ServicePlan
+            metadata:
+              name: {{ $planResourceName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: service-plan
+                crossplane.io/external-name: {{ $functionName }}-plan
+              labels:
+                catalog.cluster.local/azure-function: {{ $resourceLabel }}
+            spec:
+              forProvider:
+                location: {{ $location | quote }}
+                osType: Linux
+                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                skuName: EP1
+                tags:
+                  source: crossplane
+                  xr-name: {{ $xrName }}
+                  xr-namespace: {{ $namespace }}
+                  composite: {{ $xr.metadata.uid }}
+
+            ---
+            # Dedicated, private storage account for this Function App's host storage. It is not a
+            # catalog resource: nothing outside this composition ever needs to reference it, so it is
+            # composed directly here rather than through the AzureStorageV2 catalog item. That keeps its
+            # resolved Azure resource ID available to this same pipeline (below, for the private
+            # endpoints and RoleAssignments) without needing a cross-composition resource lookup.
+            apiVersion: storage.azure.m.upbound.io/v1beta1
+            kind: Account
+            metadata:
+              name: {{ $storageAccountResourceName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: account
+                crossplane.io/external-name: {{ $storageAccountExternalName }}
+              labels:
+                catalog.cluster.local/azure-storage: {{ $storageLabel }}
+                catalog.cluster.local/function-host-storage: "true"
+            spec:
+              forProvider:
+                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                location: {{ $location | quote }}
+                accountReplicationType: LRS
+                accountTier: Standard
+                publicNetworkAccessEnabled: false
+                allowNestedItemsToBePublic: false
+                tags:
+                  source: crossplane
+                  xr-name: {{ $xrName }}
+                  xr-namespace: {{ $namespace }}
+                  composite: {{ $xr.metadata.uid }}
+
+            {{/* Only blob, queue, and table are used: host storage runs with Azure Files content
+                 storage disabled, and only these three data roles are granted below. */}}
+            {{ range $service := list "blob" "queue" "table" }}
+            ---
+            apiVersion: network.azure.m.upbound.io/v1beta1
+            kind: PrivateEndpoint
+            metadata:
+              name: {{ $storageLabel }}-{{ $service }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: endpoint{{ $service }}
+                crossplane.io/external-name: {{ $storageLabel }}-{{ $service }}
+            spec:
+              forProvider:
+                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                subnetId: "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $.context "apiextensions.crossplane.io/environment" "network-name" }}/subnets/default"
+                location: {{ index $.context "apiextensions.crossplane.io/environment" "network-location" }} # needs to be the same region as the network
+                customNetworkInterfaceName: {{ $storageLabel }}-{{ $service }}-nic
+                privateServiceConnection:
+                  isManualConnection: false
+                  name: {{ $storageLabel }}-{{ $service }}
+                  privateConnectionResourceId: {{ $accountID | quote }}
+                  subresourceNames:
+                    - {{ $service }}
+                privateDnsZoneGroup:
+                  name: default
+                  privateDnsZoneIds:
+                    - "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/privatelink.{{ $service }}.core.windows.net"
+                tags:
+                  source: crossplane
+                  xr-name: {{ $xrName }}
+                  xr-namespace: {{ $namespace }}
+                  composite: {{ $xr.metadata.uid }}
+            {{ end }}
+
+            ---
+            apiVersion: web.azure.m.upbound.io/v1beta1
+            kind: LinuxFunctionApp
+            metadata:
+              name: {{ $xrName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: function-app
+                crossplane.io/external-name: {{ $functionName }}
+            spec:
+              forProvider:
+                appSettings:
+            {{ $appSettings | toYaml | nindent 18 }}
+                ftpPublishBasicAuthenticationEnabled: false
+                functionsExtensionVersion: "~4"
+                httpsOnly: true
+                identity:
+                  type: SystemAssigned
+                location: {{ $location | quote }}
+                name: {{ $functionName }}
+                publicNetworkAccessEnabled: true
+                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                servicePlanIdSelector:
+                  matchLabels:
+                    catalog.cluster.local/azure-function: {{ $resourceLabel }}
+                siteConfig:
+                  alwaysOn: true
+                  applicationStack:
+                    docker:
+                      - imageName: {{ $imageName | quote }}
+                        imageTag: {{ $imageTag | quote }}
+                        {{ if $params.registryCredentialsSecretName }}
+                        registryPasswordSecretRef:
+                          key: password
+                          name: {{ $params.registryCredentialsSecretName | quote }}
+                        {{ end }}
+                        registryUrl: {{ printf "https://%s" $registryHost | quote }}
+                        {{ if $params.registryCredentialsSecretName }}
+                        registryUsernameSecretRef:
+                          key: username
+                          name: {{ $params.registryCredentialsSecretName | quote }}
+                        {{ end }}
+                  ftpsState: Disabled
+                  http2Enabled: true
+                  minimumTlsVersion: "1.2"
+                  vnetRouteAllEnabled: true
+                storageAccountNameSelector:
+                  matchLabels:
+                    catalog.cluster.local/azure-storage: {{ $storageLabel }}
+                    catalog.cluster.local/function-host-storage: "true"
+                  namespace: {{ $namespace }}
+                storageUsesManagedIdentity: true
+                tags:
+                  source: crossplane
+                  xr-name: {{ $xrName }}
+                  xr-namespace: {{ $namespace }}
+                  composite: {{ $xr.metadata.uid }}
+                webdeployPublishBasicAuthenticationEnabled: false
+                virtualNetworkSubnetId: {{ $appServiceSubnetID | quote }}
+
+            {{/*
+              The Function App's system-assigned identity and the storage account's resource ID only
+              become known once both resources have been observed at least once, so these grants render
+              starting on a later reconcile, not the first one. Each RoleAssignment is scoped to this
+              one storage account and grants only the data role that Function App host storage needs -
+              nothing wider, and nothing that lets the identity manage access itself.
+            */}}
+            {{ if and $accountID $functionPrincipalID }}
+            {{ range $roleKey, $roleName := dict "blob" "Storage Blob Data Owner" "queue" "Storage Queue Data Contributor" "table" "Storage Table Data Contributor" }}
+            ---
+            apiVersion: authorization.azure.m.upbound.io/v1beta1
+            kind: RoleAssignment
+            metadata:
+              name: {{ $storageLabel }}-role-{{ $roleKey }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: role-assignment-{{ $roleKey }}
+            spec:
+              forProvider:
+                scope: {{ $accountID | quote }}
+                roleDefinitionName: {{ $roleName | quote }}
+                principalId: {{ $functionPrincipalID | quote }}
+                principalType: ServicePrincipal
+                skipServicePrincipalAadCheck: true
+            {{ end }}
+            {{ end }}
+
+            ---
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: {{ $connectionSecretName }}
+              namespace: {{ $namespace }}
+              annotations:
+                {{ setResourceNameAnnotation "connection-secret" }}
+            type: Opaque
+            {{ $hostname := dig "status" "atProvider" "defaultHostname" "" $function }}
+            {{ if $hostname }}
+            data:
+              host: {{ $hostname | b64enc }}
+              name: {{ $functionName | b64enc }}
+              url: {{ printf "https://%s" $hostname | b64enc }}
+            {{ else }}
+            data: {}
+            {{ end }}
+
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: crossplane-contrib-function-auto-ready
+
+    - step: enforce-creation-sequence
+      functionRef:
+        name: crossplane-contrib-function-sequencer
+      input:
+        apiVersion: sequencer.fn.crossplane.io/v1beta1
+        kind: Input
+        rules:
+          - sequence:
+              - "service-plan"
+              - "function-app"
+          - sequence:
+              - "account"
+              - "endpointblob"
+          - sequence:
+              - "account"
+              - "endpointqueue"
+          - sequence:
+              - "account"
+              - "endpointtable"
+          - sequence:
+              - "account"
+              - "role-assignment-blob"
+          - sequence:
+              - "function-app"
+              - "role-assignment-blob"
+          - sequence:
+              - "account"
+              - "role-assignment-queue"
+          - sequence:
+              - "function-app"
+              - "role-assignment-queue"
+          - sequence:
+              - "account"
+              - "role-assignment-table"
+          - sequence:
+              - "function-app"
+              - "role-assignment-table"
