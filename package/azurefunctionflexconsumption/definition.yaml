@@ -1,0 +1,97 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: azurefunctionflexconsumptions.catalog.cluster.local
+spec:
+  group: catalog.cluster.local
+  scope: Namespaced
+  metadata:
+    labels:
+      catalog.cluster.local/kind: AzureFunctionFlexConsumption
+    annotations:
+      catalog.cluster.local/title: "Azure Function (Flex Consumption)"
+      catalog.cluster.local/description: "Azure Functions on the Flex Consumption plan: fast, pay-per-use elastic scaling, deploying your code directly rather than a container image. This plan does not accept a container image - publish your code as a zip package to the container reported in status.deploymentContainerEndpoint, e.g. via `func azure functionapp publish --flex-consumption-plan`, the Azure/functions-action GitHub Action, or `az functionapp deploy --type zip`."
+      catalog.cluster.local/icon: "PHN2ZyB3aWR0aD0iODAwcHgiIGhlaWdodD0iODAwcHgiIGZpbGw9IiMwMDc4RDQiIHJvbGU9ImltZyIgdmlld0JveD0iMCAwIDI0IDI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0xMC41MzcuOTA0TDYuNjAyIDEyLjA0bDQuNzk4LjAzNy0zLjc0OCAxMS4wMTh2LjAwMkwxNy45OTYgOC4zOWgtNS4wMjJMMTcuODQ3LjkwM2gtMy44MjR6TTYuOTAzIDQuOTFhLjU4NS41ODUgMCAwIDAtLjQxMi4xN0wuMTU1IDExLjI4NWEuNjgyLjY4MiAwIDAgMCAwIC44NjVsNi40NDggNi4zOTZhLjYyNS42MjUgMCAwIDAgLjgyNCAwIC42MzguNjM4IDAgMCAwIDAtLjg2NWwtNS40MzYtNS41M2EuNjQxLjY0MSAwIDAgMSAwLS44NjVsNS4zMjQtNS4zNDRhLjU3NC41NzQgMCAwIDAgMC0uODY1LjU4Ni41ODYgMCAwIDAtLjQxMi0uMTY5em0xMC4xOTMgMGEuNTg1LjU4NSAwIDAgMC0uNDEyLjE3LjU3Mi41NzIgMCAwIDAgMCAuODY0bDUuNDM1IDUuMzQzYS42NC42NCAwIDAgMSAwIC44NjZsLTUuNTQ4IDUuNTNhLjY0LjY0IDAgMCAwIDAgLjg2NS42MjUuNjI1IDAgMCAwIC44MjQgMGw2LjQ1LTYuMzk2YS42OC42OCAwIDAgMCAwLS44NjVsLTYuMzM3LTYuMjA4YS41ODUuNTg1IDAgMCAwLS40MTItLjE2OXoiLz48L3N2Zz4K"
+      catalog.cluster.local/maintainer: ""
+      catalog.cluster.local/url: "https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan"
+      catalog.cluster.local/tags: "function,serverless,compute,managed,flex-consumption"
+  names:
+    kind: AzureFunctionFlexConsumption
+    plural: azurefunctionflexconsumptions
+  versions:
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          description: AzureFunctionFlexConsumption provisions a Flex Consumption Azure Function App and its required infrastructure.
+          type: object
+          properties:
+            spec:
+              description: AzureFunctionFlexConsumptionSpec defines the desired Function App.
+              type: object
+              properties:
+                crossplane:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                parameters:
+                  type: object
+                  properties:
+                    location:
+                      type: string
+                      description: "Azure region for the Function App and its dedicated storage account."
+                      display-name: "Location"
+                      enum:
+                        - "Switzerland North"
+                      default: "Switzerland North"
+                    runtimeName:
+                      type: string
+                      description: "Language runtime the Function App code targets."
+                      display-name: "Runtime"
+                      enum:
+                        - "dotnet-isolated"
+                        - "java"
+                        - "node"
+                        - "powershell"
+                        - "python"
+                      default: "node"
+                    runtimeVersion:
+                      type: string
+                      description: "Runtime version, matching runtimeName: 8.0 or 9.0 for dotnet-isolated, 20 for node, 3.10 or 3.11 for python, 11 or 17 for java, 7.4 for powershell."
+                      display-name: "Runtime Version"
+                      default: "20"
+                    environmentVariables:
+                      type: array
+                      description: "Non-secret environment variables exposed as Function App settings. Use external secret integration for sensitive values."
+                      display-name: "Environment Variables"
+                      x-kubernetes-list-type: map
+                      x-kubernetes-list-map-keys:
+                        - key
+                      items:
+                        type: object
+                        properties:
+                          key:
+                            type: string
+                            minLength: 1
+                            maxLength: 255
+                            description: "Only letters, numbers, periods, and underscores are allowed - no spaces or other special characters."
+                            pattern: '^[A-Za-z0-9._]+$'
+                          value:
+                            type: string
+                        required:
+                          - key
+                          - value
+              required:
+                - parameters
+            status:
+              description: AzureFunctionFlexConsumptionStatus surfaces details needed to publish code into this Function App.
+              type: object
+              properties:
+                functionAppName:
+                  type: string
+                  description: "Generated Azure Function App name used for publishing and Azure resource lookup."
+                  display-name: "Function App Name"
+                deploymentContainerEndpoint:
+                  type: string
+                  description: "Blob endpoint of the private container this Function App reads its code package from. This plan does not accept a container image - publish code here as a zip package, for example with `func azure functionapp publish --flex-consumption-plan`, the Azure/functions-action GitHub Action, or `az functionapp deploy --type zip`. Empty until the dedicated storage account and container have been created."
+                  display-name: "Deployment Container Endpoint"

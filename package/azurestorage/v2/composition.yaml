@@ -40,6 +40,14 @@ spec:
             {{ $params := $xr.spec.parameters }}
             {{ $location := default "Switzerland North" $params.location }}
             {{ $account := .observed.resources.account }}
+            {{/* Storage Account names are a globally-unique DNS label restricted to lowercase letters
+                 and digits (no hyphens) and capped at 24 characters, so naming it from the plain
+                 instance name risks colliding with another cluster/namespace that reused the same
+                 friendly name. Truncate it hard and append a short hash of the immutable resource UID
+                 as a "random" postfix: stable across reconciles (so the external-name never drifts)
+                 but effectively unique per instance. */}}
+            {{ $postfix := trunc 6 (sha256sum (printf "%s" $xr.metadata.uid)) }}
+            {{ $storageAccountExternalName := printf "%s%s" (trunc 18 (regexReplaceAll "[^a-z0-9]" ($xrName | lower) "")) $postfix }}
 
             apiVersion: storage.azure.m.upbound.io/v1beta1
             kind: Account
@@ -48,7 +56,7 @@ spec:
               namespace: {{ $namespace }}
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: account
-                crossplane.io/external-name: {{ regexReplaceAll "[^a-z0-9]" (printf "%s" $xr.metadata.uid | lower) "" | trunc 24 }}
+                crossplane.io/external-name: {{ $storageAccountExternalName }}
               labels:
                 catalog.cluster.local/azure-storage: {{ $xrName }}
                 {{ if and (eq $location "Switzerland North") (not (default false $params.public)) }}

@@ -1,0 +1,12 @@
+apiVersion: catalog.cluster.local/v2
+kind: AzureFunctionFlexConsumption
+metadata:
+  name: azurefunctionflexconsumption-sample
+spec:
+  parameters:
+    location: Switzerland North
+    runtimeName: node
+    runtimeVersion: "20"
+    environmentVariables:
+      - key: EXAMPLE_SETTING
+        value: example-value

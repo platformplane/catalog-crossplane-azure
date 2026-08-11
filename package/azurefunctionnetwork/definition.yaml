@@ -1,0 +1,58 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: functionnetworks.azure.platformplane.io
+spec:
+  group: azure.platformplane.io
+  scope: Namespaced
+  names:
+    kind: FunctionNetwork
+    plural: functionnetworks
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          description: FunctionNetwork owns the shared Azure Function integration subnets for one platform cluster.
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                crossplane:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                parameters:
+                  type: object
+                  properties:
+                    resourceGroupName:
+                      type: string
+                      minLength: 1
+                    virtualNetworkName:
+                      type: string
+                      minLength: 1
+                    appServiceAddressPrefix:
+                      type: string
+                      description: Dedicated /26 delegated to Microsoft.Web/serverFarms.
+                      pattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/26$'
+                    flexConsumptionAddressPrefix:
+                      type: string
+                      description: Dedicated /26 delegated to Microsoft.App/environments.
+                      pattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/26$'
+                  required:
+                    - resourceGroupName
+                    - virtualNetworkName
+                    - appServiceAddressPrefix
+                    - flexConsumptionAddressPrefix
+              required:
+                - parameters
+            status:
+              type: object
+              properties:
+                appServiceSubnetId:
+                  type: string
+                  description: Azure resource ID of the App Service integration subnet once observed.
+                flexConsumptionSubnetId:
+                  type: string
+                  description: Azure resource ID of the Flex Consumption integration subnet once observed.

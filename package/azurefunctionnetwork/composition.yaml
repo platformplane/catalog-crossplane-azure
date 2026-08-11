@@ -1,0 +1,108 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: functionnetworks.azure.platformplane.io
+spec:
+  compositeTypeRef:
+    apiVersion: azure.platformplane.io/v1alpha1
+    kind: FunctionNetwork
+
+  mode: Pipeline
+  pipeline:
+    - step: function-integration-subnets
+      functionRef:
+        name: crossplane-contrib-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{ $xr := .observed.composite.resource }}
+            {{ $namespace := $xr.metadata.namespace }}
+            {{ $parameters := $xr.spec.parameters }}
+
+            apiVersion: network.azure.m.upbound.io/v1beta1
+            kind: Subnet
+            metadata:
+              name: azure-functions-app-service
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: app-service-subnet
+                crossplane.io/external-name: app-service
+            spec:
+              managementPolicies:
+                - Observe
+                - Create
+                - Update
+                - LateInitialize
+              forProvider:
+                addressPrefixes:
+                  - {{ $parameters.appServiceAddressPrefix | quote }}
+                resourceGroupName: {{ $parameters.resourceGroupName | quote }}
+                virtualNetworkName: {{ $parameters.virtualNetworkName | quote }}
+                delegation:
+                  - name: app-service-delegation
+                    serviceDelegation:
+                      name: Microsoft.Web/serverFarms
+
+            ---
+            apiVersion: network.azure.m.upbound.io/v1beta1
+            kind: Subnet
+            metadata:
+              name: azure-functions-flex-consumption
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: flex-consumption-subnet
+                crossplane.io/external-name: flex-consumption
+            spec:
+              managementPolicies:
+                - Observe
+                - Create
+                - Update
+                - LateInitialize
+              forProvider:
+                addressPrefixes:
+                  - {{ $parameters.flexConsumptionAddressPrefix | quote }}
+                resourceGroupName: {{ $parameters.resourceGroupName | quote }}
+                virtualNetworkName: {{ $parameters.virtualNetworkName | quote }}
+                delegation:
+                  - name: flex-consumption-delegation
+                    serviceDelegation:
+                      name: Microsoft.App/environments
+
+            {{ $appServiceSubnet := dig "resources" "app-service-subnet" "resource" dict .observed }}
+            {{ $appServiceSubnetId := "" }}
+            {{ $observedAppServiceSubnetId := dig "status" "atProvider" "id" "" $appServiceSubnet }}
+            {{ $appServiceSubnetReady := false }}
+            {{ range $condition := dig "status" "conditions" list $appServiceSubnet }}
+            {{ if and (eq (dig "type" "" $condition) "Ready") (eq (dig "status" "" $condition) "True") }}
+            {{ $appServiceSubnetReady = true }}
+            {{ end }}
+            {{ end }}
+            {{ if and $appServiceSubnetReady $observedAppServiceSubnetId }}
+            {{ $appServiceSubnetId = $observedAppServiceSubnetId }}
+            {{ end }}
+            {{ $flexConsumptionSubnet := dig "resources" "flex-consumption-subnet" "resource" dict .observed }}
+            {{ $flexConsumptionSubnetId := "" }}
+            {{ $observedFlexConsumptionSubnetId := dig "status" "atProvider" "id" "" $flexConsumptionSubnet }}
+            {{ $flexConsumptionSubnetReady := false }}
+            {{ range $condition := dig "status" "conditions" list $flexConsumptionSubnet }}
+            {{ if and (eq (dig "type" "" $condition) "Ready") (eq (dig "status" "" $condition) "True") }}
+            {{ $flexConsumptionSubnetReady = true }}
+            {{ end }}
+            {{ end }}
+            {{ if and $flexConsumptionSubnetReady $observedFlexConsumptionSubnetId }}
+            {{ $flexConsumptionSubnetId = $observedFlexConsumptionSubnetId }}
+            {{ end }}
+
+            ---
+            apiVersion: azure.platformplane.io/v1alpha1
+            kind: FunctionNetwork
+            status:
+              appServiceSubnetId: {{ $appServiceSubnetId | quote }}
+              flexConsumptionSubnetId: {{ $flexConsumptionSubnetId | quote }}
+
+    - step: automatically-detect-readiness
+      functionRef:
+        name: crossplane-contrib-function-auto-ready

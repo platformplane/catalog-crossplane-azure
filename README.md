@@ -14,6 +14,14 @@ Private registries are supported by setting `registryCredentialsSecretName` to a
 
 See [`examples/azurefunction.yaml`](examples/azurefunction.yaml) for a minimal function.
 
+## Azure Function (Flex Consumption)
+
+`AzureFunctionFlexConsumption` provisions a Linux Function App on a Flex Consumption (`FC1`) plan instead of Elastic Premium: fast, pay-per-use elastic scaling, with no billed instance kept warm while idle. Flex Consumption does not support custom container images in the provider this catalog uses - set `runtimeName`/`runtimeVersion` (e.g. `node`/`20`) instead of an image, and add any non-secret environment variables. Use `AzureFunction` instead if you need to deploy an arbitrary OCI container image.
+
+Each function gets its own dedicated, private storage account holding just the deployment package container (Flex Consumption has no separate queue/table host-storage usage the way Premium plans do). The Function App's system-assigned managed identity is granted Blob Data Owner on that one container via a Crossplane-managed `RoleAssignment`, scoped to the container rather than the whole account.
+
+See [`examples/azurefunctionflexconsumption.yaml`](examples/azurefunctionflexconsumption.yaml) for a minimal function.
+
 ## Azure Storage Account Items (e.g. BlobStorage)
 
 IF you want to add e.g. queue storage, copy paste blob storage and adjust it slightly, see table [here](https://learn.microsoft.com/en-us/azure/private-link/availability#storage)
