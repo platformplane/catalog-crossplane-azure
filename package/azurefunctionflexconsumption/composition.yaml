@@ -35,6 +35,16 @@ spec:
             {{ $xrName := $xr.metadata.name }}
             {{ $namespace := $xr.metadata.namespace }}
             {{ $params := $xr.spec.parameters }}
+            {{/* Optional access configuration must not replace or disable the catalog defaults.
+                 Normalizing absent values here also keeps later range/with blocks from depending on
+                 Go template's <no value> behaviour. */}}
+            {{ $managedIdentityRoleAssignments := dig "managedIdentityRoleAssignments" (list) $params }}
+            {{ $keyVaultAccessPolicy := dig "keyVaultAccessPolicy" (dict) $params }}
+            {{ $keyVaultID := dig "keyVaultId" "" $keyVaultAccessPolicy }}
+            {{ $keyVaultTenantID := dig "tenantId" "" $keyVaultAccessPolicy }}
+            {{ $keyVaultIDValid := and (kindIs "string" $keyVaultID) (regexMatch "^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft.KeyVault/vaults/[^/]+$" $keyVaultID) }}
+            {{ $keyVaultTenantIDValid := and (kindIs "string" $keyVaultTenantID) (regexMatch "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" $keyVaultTenantID) }}
+            {{ $environmentVariables := dig "environmentVariables" (list) $params }}
             {{ $environment := index $.context "apiextensions.crossplane.io/environment" }}
 
             {{/* crossplane-azure-operator only publishes flex-consumption-subnet-id once the dedicated
@@ -49,7 +59,10 @@ spec:
                  This deliberately avoids sprig's `required`/`fail` functions - see
                  azurefunction/composition.yaml for why. */}}
             {{ $flexConsumptionSubnetID := dig "flex-consumption-subnet-id" "" $environment }}
-            {{ $location := default "Switzerland North" $params.location }}
+            {{ $location := default "Switzerland North" (dig "location" "" $params) }}
+            {{ $runtimeName := default "node" (dig "runtimeName" "" $params) }}
+            {{ $runtimeDefaultVersions := dict "dotnet-isolated" "8.0" "java" "17" "node" "20" "powershell" "7.4" "python" "3.11" "custom" "1.0" }}
+            {{ $runtimeVersion := default (get $runtimeDefaultVersions $runtimeName) (dig "runtimeVersion" "" $params) }}
             {{/* Azure Function App names are a globally-unique DNS label (<name>.azurewebsites.net) and
                  Storage Account names are globally unique too, so naming either from the plain instance
                  name risks colliding with another cluster/namespace that reused the same friendly name.
@@ -83,12 +96,18 @@ spec:
             {{ $connectionSecretName = printf "%s-%s-connection" ($xrName | trunc 43 | trimSuffix "-") $postfix }}
             {{ end }}
             {{ $appSettings := dict }}
-            {{ range $variable := default (list) $params.environmentVariables }}
+            {{ range $variable := $environmentVariables }}
             {{ $_ := set $appSettings $variable.key $variable.value }}
             {{ end }}
+            {{/* Azure Functions still requires AzureWebJobsStorage for host metadata on Flex
+                 Consumption. Use the same dedicated account through the Function App's system identity;
+                 these platform-owned settings intentionally override user-provided values. */}}
+            {{ $_ := set $appSettings "AzureWebJobsStorage__accountName" $storageAccountExternalName }}
+            {{ $_ := set $appSettings "AzureWebJobsStorage__credential" "managedidentity" }}
 
             {{/* Read back what was observed of our own composed resources on the previous reconcile. */}}
             {{ $account := dig "resources" "account" "resource" dict .observed }}
+            {{ $accountID := dig "status" "atProvider" "id" "" $account }}
             {{ $accountBlobEndpoint := dig "status" "atProvider" "primaryBlobEndpoint" "" $account }}
             {{ $container := dig "resources" "container" "resource" dict .observed }}
             {{ $containerID := dig "status" "atProvider" "resourceManagerId" "" $container }}
@@ -130,11 +149,11 @@ spec:
                   composite: {{ $xr.metadata.uid }}
 
             ---
-            # Dedicated, private storage account holding the deployment package container. It is not a
-            # catalog resource: nothing outside this composition ever needs to reference it, so it is
-            # composed directly here rather than through the AzureStorageV2 catalog item, keeping its
-            # resolved blob endpoint available to this same pipeline (below, for the Function App and
-            # the RoleAssignment) without needing a cross-composition resource lookup.
+            # Dedicated, private storage account holding Function host metadata and the deployment
+            # package container. It is not a catalog resource: nothing outside this composition ever
+            # needs to reference it, so it is composed directly here rather than through the
+            # AzureStorageV2 catalog item, keeping its resolved ID and blob endpoint available to this
+            # same pipeline without needing a cross-composition resource lookup.
             apiVersion: storage.azure.m.upbound.io/v1beta1
             kind: Account
             metadata:
@@ -160,9 +179,9 @@ spec:
                   xr-namespace: {{ $namespace }}
                   composite: {{ $xr.metadata.uid }}
 
-            {{/* Flex Consumption only needs blob access: there is no separate "host storage" queue/table
-                 usage the way the Premium/Elastic plans have via AzureWebJobsStorage - the deployment
-                 package container is the only thing this storage account is for. */}}
+            {{/* These functions need Blob storage both for the Flex deployment package and for
+                 AzureWebJobsStorage host metadata. Queue and Table private endpoints are unnecessary
+                 for the HTTP and timer triggers currently deployed through this catalog item. */}}
             ---
             apiVersion: network.azure.m.upbound.io/v1beta1
             kind: PrivateEndpoint
@@ -251,6 +270,10 @@ spec:
               forProvider:
                 appSettings:
             {{ $appSettings | toYaml | nindent 18 }}
+                # Work around provider-azure-web Observe panics when Azure returns no
+                # Authentication / Authorization configuration for the Function App.
+                authSettings:
+                  enabled: false
                 httpsOnly: true
                 identity:
                   type: SystemAssigned
@@ -259,8 +282,8 @@ spec:
                 location: {{ $location | quote }}
                 publicNetworkAccessEnabled: true
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
-                runtimeName: {{ $params.runtimeName | quote }}
-                runtimeVersion: {{ $params.runtimeVersion | quote }}
+                runtimeName: {{ $runtimeName | quote }}
+                runtimeVersion: {{ $runtimeVersion | quote }}
                 servicePlanIdSelector:
                   matchLabels:
                     catalog.cluster.local/azure-function: {{ $resourceLabel }}
@@ -282,10 +305,11 @@ spec:
             {{/*
               The Function App's system-assigned identity only becomes known once it has been observed
               at least once, so this grant renders starting on a later reconcile, not the first one. It
-              is scoped to just the deployment container - nothing wider, and nothing that lets the
-              identity manage access itself.
+              is scoped to this Function's dedicated account so AzureWebJobsStorage can create and use
+              its host-metadata containers as well as read the deployment package. Nothing outside this
+              Function uses the account, and the role cannot manage access itself.
             */}}
-            {{ if $functionPrincipalID }}
+            {{ if and $functionPrincipalID $accountID }}
             ---
             apiVersion: authorization.azure.m.upbound.io/v1beta1
             kind: RoleAssignment
@@ -296,11 +320,63 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: role-assignment-blob
             spec:
               forProvider:
-                scope: {{ $containerID | quote }}
+                scope: {{ $accountID | quote }}
                 roleDefinitionName: "Storage Blob Data Owner"
                 principalId: {{ $functionPrincipalID | quote }}
                 principalType: ServicePrincipal
                 skipServicePrincipalAadCheck: true
+            {{ end }}
+
+            {{/* Optional access to existing Azure resources is deliberately restricted by the XRD to
+                 catalog-approved built-in roles. Rendering only after the Function identity is observed
+                 avoids an imperative wait loop and keeps the role assignment under Crossplane ownership. */}}
+            {{ if $functionPrincipalID }}
+            {{ range $assignment := $managedIdentityRoleAssignments }}
+            {{ $assignmentResourceName := printf "%s-role-%s" $xrName $assignment.name }}
+            {{ if gt (len $assignmentResourceName) 63 }}
+            {{ $assignmentResourceName = printf "%s-%s-%s" (trunc 20 $xrName | trimSuffix "-") (trunc 29 $assignment.name | trimSuffix "-") $postfix }}
+            {{ end }}
+            ---
+            apiVersion: authorization.azure.m.upbound.io/v1beta1
+            kind: RoleAssignment
+            metadata:
+              name: {{ $assignmentResourceName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: role-assignment-{{ $assignment.name }}
+            spec:
+              forProvider:
+                scope: {{ $assignment.scope | quote }}
+                roleDefinitionName: {{ default "Azure Kubernetes Service Contributor Role" (dig "roleDefinitionName" "" $assignment) | quote }}
+                principalId: {{ $functionPrincipalID | quote }}
+                principalType: ServicePrincipal
+                skipServicePrincipalAadCheck: true
+            {{ end }}
+
+            {{/* ZuluPlane's existing Key Vault uses legacy access policies. Keep this separate from
+                 Azure RBAC role assignments and grant only the one permission App Service Key Vault
+                 references require: Get. */}}
+            {{ if and $keyVaultIDValid $keyVaultTenantIDValid }}
+            {{ $keyVaultPolicyResourceName := printf "%s-key-vault" $xrName }}
+            {{ if gt (len $keyVaultPolicyResourceName) 63 }}
+            {{ $keyVaultPolicyResourceName = printf "%s-%s-key-vault" (trunc 40 $xrName | trimSuffix "-") $postfix }}
+            {{ end }}
+            ---
+            apiVersion: keyvault.azure.m.upbound.io/v1beta1
+            kind: AccessPolicy
+            metadata:
+              name: {{ $keyVaultPolicyResourceName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: key-vault-access-policy
+            spec:
+              forProvider:
+                keyVaultId: {{ $keyVaultID | quote }}
+                objectId: {{ $functionPrincipalID | quote }}
+                tenantId: {{ $keyVaultTenantID | quote }}
+                secretPermissions:
+                  - Get
+            {{ end }}
             {{ end }}
             {{ end }}
 
@@ -316,6 +392,7 @@ spec:
             {{ $hostname := dig "status" "atProvider" "defaultHostname" "" $function }}
             {{ if $hostname }}
             data:
+              deployment-note: {{ printf "Run from your Function project directory: func azure functionapp publish %s" $functionName | b64enc }}
               host: {{ $hostname | b64enc }}
               name: {{ $functionName | b64enc }}
               url: {{ printf "https://%s" $hostname | b64enc }}

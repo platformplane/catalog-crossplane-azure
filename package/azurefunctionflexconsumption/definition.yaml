@@ -10,7 +10,7 @@ spec:
       catalog.cluster.local/kind: AzureFunctionFlexConsumption
     annotations:
       catalog.cluster.local/title: "Azure Function (Flex Consumption)"
-      catalog.cluster.local/description: "Azure Functions on the Flex Consumption plan: fast, pay-per-use elastic scaling, deploying your code directly rather than a container image. This plan does not accept a container image - publish your code as a zip package to the container reported in status.deploymentContainerEndpoint, e.g. via `func azure functionapp publish --flex-consumption-plan`, the Azure/functions-action GitHub Action, or `az functionapp deploy --type zip`."
+      catalog.cluster.local/description: "Azure Functions on the Flex Consumption plan: fast, pay-per-use elastic scaling, deploying your code directly rather than a container image. This plan does not accept a container image - publish a ready-to-run package with Flex Consumption OneDeploy, for example through Azure Functions Core Tools or `az functionapp deployment source config-zip`."
       catalog.cluster.local/icon: "PHN2ZyB3aWR0aD0iODAwcHgiIGhlaWdodD0iODAwcHgiIGZpbGw9IiMwMDc4RDQiIHJvbGU9ImltZyIgdmlld0JveD0iMCAwIDI0IDI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0xMC41MzcuOTA0TDYuNjAyIDEyLjA0bDQuNzk4LjAzNy0zLjc0OCAxMS4wMTh2LjAwMkwxNy45OTYgOC4zOWgtNS4wMjJMMTcuODQ3LjkwM2gtMy44MjR6TTYuOTAzIDQuOTFhLjU4NS41ODUgMCAwIDAtLjQxMi4xN0wuMTU1IDExLjI4NWEuNjgyLjY4MiAwIDAgMCAwIC44NjVsNi40NDggNi4zOTZhLjYyNS42MjUgMCAwIDAgLjgyNCAwIC42MzguNjM4IDAgMCAwIDAtLjg2NWwtNS40MzYtNS41M2EuNjQxLjY0MSAwIDAgMSAwLS44NjVsNS4zMjQtNS4zNDRhLjU3NC41NzQgMCAwIDAgMC0uODY1LjU4Ni41ODYgMCAwIDAtLjQxMi0uMTY5em0xMC4xOTMgMGEuNTg1LjU4NSAwIDAgMC0uNDEyLjE3LjU3Mi41NzIgMCAwIDAgMCAuODY0bDUuNDM1IDUuMzQzYS42NC42NCAwIDAgMSAwIC44NjZsLTUuNTQ4IDUuNTNhLjY0LjY0IDAgMCAwIDAgLjg2NS42MjUuNjI1IDAgMCAwIC44MjQgMGw2LjQ1LTYuMzk2YS42OC42OCAwIDAgMCAwLS44NjVsLTYuMzM3LTYuMjA4YS41ODUuNTg1IDAgMCAwLS40MTItLjE2OXoiLz48L3N2Zz4K"
       catalog.cluster.local/maintainer: ""
       catalog.cluster.local/url: "https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan"
@@ -39,27 +39,32 @@ spec:
                   properties:
                     location:
                       type: string
-                      description: "Azure region for the Function App and its dedicated storage account."
+                      description: "Azure region for the Function App and its dedicated storage account. This value cannot be changed after creation."
                       display-name: "Location"
+                      x-kubernetes-validations:
+                        - rule: self == oldSelf
+                          message: "Location cannot be changed after creation."
                       enum:
                         - "Switzerland North"
                       default: "Switzerland North"
                     runtimeName:
                       type: string
-                      description: "Language runtime the Function App code targets."
+                      description: "Language runtime the Function App code targets. This value cannot be changed after creation."
                       display-name: "Runtime"
+                      x-kubernetes-validations:
+                        - rule: self == oldSelf
+                          message: "Runtime cannot be changed after creation."
                       enum:
                         - "dotnet-isolated"
                         - "java"
                         - "node"
                         - "powershell"
                         - "python"
-                      default: "node"
+                        - "custom"
                     runtimeVersion:
                       type: string
-                      description: "Runtime version, matching runtimeName: 8.0 or 9.0 for dotnet-isolated, 20 for node, 3.10 or 3.11 for python, 11 or 17 for java, 7.4 for powershell."
+                      description: "Optional runtime version matching runtimeName. When omitted, the composition uses: 8.0 for dotnet-isolated, 17 for java, 20 for node, 7.4 for powershell, 3.11 for python, and 1.0 for custom handlers."
                       display-name: "Runtime Version"
-                      default: "20"
                     environmentVariables:
                       type: array
                       description: "Non-secret environment variables exposed as Function App settings. Use external secret integration for sensitive values."
@@ -81,6 +86,45 @@ spec:
                         required:
                           - key
                           - value
+                    managedIdentityRoleAssignments:
+                      type: array
+                      title: "Managed Identity Role Assignments"
+                      description: "Approved Azure RBAC roles granted to the Function App's system-assigned managed identity on an existing Azure resource. Keep every scope as narrow as possible."
+                      x-kubernetes-list-type: map
+                      x-kubernetes-list-map-keys:
+                        - name
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            title: "Name"
+                            minLength: 1
+                            maxLength: 32
+                            pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                            description: "Stable name used to identify this role assignment inside the composition."
+                          roleDefinitionName:
+                            type: string
+                            title: "Role"
+                            description: "Catalog-approved built-in Azure role."
+                            default: "Azure Kubernetes Service Contributor Role"
+                            pattern: '^Azure Kubernetes Service Contributor Role$'
+                          scope:
+                            type: string
+                            title: "Scope"
+                            minLength: 1
+                            pattern: '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/[^/]+/.+$'
+                            description: "Full Azure resource ID to which the role is scoped."
+                        required:
+                          - name
+                          - roleDefinitionName
+                          - scope
+                    keyVaultAccessPolicy:
+                      type: object
+                      description: "Programmatic-only read access for a legacy access-policy Key Vault. Supply keyVaultId and tenantId through YAML or the API; the catalog form intentionally hides this object."
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                    - runtimeName
               required:
                 - parameters
             status:
@@ -93,5 +137,5 @@ spec:
                   display-name: "Function App Name"
                 deploymentContainerEndpoint:
                   type: string
-                  description: "Blob endpoint of the private container this Function App reads its code package from. This plan does not accept a container image - publish code here as a zip package, for example with `func azure functionapp publish --flex-consumption-plan`, the Azure/functions-action GitHub Action, or `az functionapp deploy --type zip`. Empty until the dedicated storage account and container have been created."
+                  description: "Blob endpoint of the private container from which this Function App reads its code package. Publish a ready-to-run package through Flex Consumption OneDeploy, for example with Azure Functions Core Tools or `az functionapp deployment source config-zip`. Empty until the dedicated storage account and container have been created."
                   display-name: "Deployment Container Endpoint"
