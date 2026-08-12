@@ -10,7 +10,7 @@ spec:
       catalog.cluster.local/kind: AzureFunctionFlexConsumption
     annotations:
       catalog.cluster.local/title: "Azure Function (Flex Consumption)"
-      catalog.cluster.local/description: "Azure Functions on the Flex Consumption plan: fast, pay-per-use elastic scaling, deploying your code directly rather than a container image. This plan does not accept a container image - publish a ready-to-run package with Flex Consumption OneDeploy, for example through Azure Functions Core Tools or `az functionapp deployment source config-zip`."
+      catalog.cluster.local/description: "Azure Functions on the Flex Consumption plan: fast, pay-per-use elastic scaling, deploying your code directly rather than a container image. Select a GitLab Generic Package ZIP for automatic deployment, or publish manually with a Flex Consumption OneDeploy-compatible tool."
       catalog.cluster.local/icon: "PHN2ZyB3aWR0aD0iODAwcHgiIGhlaWdodD0iODAwcHgiIGZpbGw9IiMwMDc4RDQiIHJvbGU9ImltZyIgdmlld0JveD0iMCAwIDI0IDI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0xMC41MzcuOTA0TDYuNjAyIDEyLjA0bDQuNzk4LjAzNy0zLjc0OCAxMS4wMTh2LjAwMkwxNy45OTYgOC4zOWgtNS4wMjJMMTcuODQ3LjkwM2gtMy44MjR6TTYuOTAzIDQuOTFhLjU4NS41ODUgMCAwIDAtLjQxMi4xN0wuMTU1IDExLjI4NWEuNjgyLjY4MiAwIDAgMCAwIC44NjVsNi40NDggNi4zOTZhLjYyNS42MjUgMCAwIDAgLjgyNCAwIC42MzguNjM4IDAgMCAwIDAtLjg2NWwtNS40MzYtNS41M2EuNjQxLjY0MSAwIDAgMSAwLS44NjVsNS4zMjQtNS4zNDRhLjU3NC41NzQgMCAwIDAgMC0uODY1LjU4Ni41ODYgMCAwIDAtLjQxMi0uMTY5em0xMC4xOTMgMGEuNTg1LjU4NSAwIDAgMC0uNDEyLjE3LjU3Mi41NzIgMCAwIDAgMCAuODY0bDUuNDM1IDUuMzQzYS42NC42NCAwIDAgMSAwIC44NjZsLTUuNTQ4IDUuNTNhLjY0LjY0IDAgMCAwIDAgLjg2NS42MjUuNjI1IDAgMCAwIC44MjQgMGw2LjQ1LTYuMzk2YS42OC42OCAwIDAgMCAwLS44NjVsLTYuMzM3LTYuMjA4YS41ODUuNTg1IDAgMCAwLS40MTItLjE2OXoiLz48L3N2Zz4K"
       catalog.cluster.local/maintainer: ""
       catalog.cluster.local/url: "https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan"
@@ -36,6 +36,9 @@ spec:
                   x-kubernetes-preserve-unknown-fields: true
                 parameters:
                   type: object
+                  x-kubernetes-validations:
+                    - rule: "has(self.package) == has(self.packageSha256)"
+                      message: "package and packageSha256 must be supplied together."
                   properties:
                     location:
                       type: string
@@ -65,6 +68,20 @@ spec:
                       type: string
                       description: "Optional runtime version matching runtimeName. When omitted, the composition uses: 8.0 for dotnet-isolated, 17 for java, 20 for node, 7.4 for powershell, 3.11 for python, and 1.0 for custom handlers."
                       display-name: "Runtime Version"
+                    package:
+                      type: string
+                      format: uri
+                      description: "Full HTTPS download URL of an Azure Function deployment ZIP in the current space's private GitLab Generic Package registry. The URL includes the project, package name, immutable version, and ZIP filename. Change the URL and SHA-256 to deploy a new package."
+                      display-name: "Package URL"
+                      maxLength: 2048
+                      pattern: '^https://[^/?#]+/api/v4/projects/[^/?#]+/packages/generic/[^/?#]+/[^/?#]+/[^/?#]+\.zip$'
+                    packageSha256:
+                      type: string
+                      description: "Lowercase SHA-256 digest used to verify the package before deployment."
+                      display-name: "Package SHA-256"
+                      minLength: 64
+                      maxLength: 64
+                      pattern: '^[a-f0-9]{64}$'
                     environmentVariables:
                       type: array
                       description: "Non-secret environment variables exposed as Function App settings. Use external secret integration for sensitive values."
@@ -137,5 +154,5 @@ spec:
                   display-name: "Function App Name"
                 deploymentContainerEndpoint:
                   type: string
-                  description: "Blob endpoint of the private container from which this Function App reads its code package. Publish a ready-to-run package through Flex Consumption OneDeploy, for example with Azure Functions Core Tools or `az functionapp deployment source config-zip`. Empty until the dedicated storage account and container have been created."
+                  description: "Blob endpoint of the private container from which this Function App reads its code package. When package and packageSha256 are set, the selected ZIP is deployed automatically through Flex Consumption OneDeploy. Empty until the dedicated storage account and container have been created."
                   display-name: "Deployment Container Endpoint"
