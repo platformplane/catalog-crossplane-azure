@@ -47,52 +47,31 @@ spec:
             {{ $environmentVariables := dig "environmentVariables" (list) $params }}
             {{ $environment := index $.context "apiextensions.crossplane.io/environment" }}
 
-            {{/* crossplane-azure-operator only publishes flex-consumption-subnet-id once the dedicated
-                 integration subnet exists in this cluster's virtual network and carries the
-                 Microsoft.App/environments delegation. Leave it empty while absent and skip rendering
-                 the Function App below (guarded further down where it is used) instead of failing the
-                 whole pipeline step: a missing key would otherwise resolve to empty and produce a
-                 Function App with no VNet integration, which cannot reach its private-endpoint-only
-                 host storage. The service plan and storage account below don't need this value, so
-                 they still get created on this reconcile even while it's missing.
-
-                 This deliberately avoids sprig's `required`/`fail` functions - see
-                 azurefunction/composition.yaml for why. */}}
+            {{/* The operator publishes this only after creating the delegated integration subnet.
+                 Until then, create the independent plan and storage resources but not a Function App
+                 that could not reach its private host storage. */}}
             {{ $flexConsumptionSubnetID := dig "flex-consumption-subnet-id" "" $environment }}
             {{ $location := default "Switzerland North" (dig "location" "" $params) }}
-            {{ $runtimeName := default "node" (dig "runtimeName" "" $params) }}
+            {{ $runtimeName := dig "runtimeName" "" $params }}
             {{ $runtimeDefaultVersions := dict "dotnet-isolated" "8.0" "java" "17" "node" "20" "powershell" "7.4" "python" "3.11" "custom" "1.0" }}
             {{ $runtimeVersion := default (get $runtimeDefaultVersions $runtimeName) (dig "runtimeVersion" "" $params) }}
-            {{ $packageURL := dig "package" "" $params }}
+            {{ $packageURL := $params.package }}
             {{ $packageSHA256 := dig "packageSha256" "" $params }}
-            {{/* Azure Function App names are a globally-unique DNS label (<name>.azurewebsites.net) and
-                 Storage Account names are globally unique too, so naming either from the plain instance
-                 name risks colliding with another cluster/namespace that reused the same friendly name.
-                 Append a short hash of the immutable resource UID as a "random" postfix instead: it's
-                 stable across reconciles (so the external-name / Azure resource ID computed below never
-                 drifts) but effectively unique per instance. */}}
+            {{/* Keep globally unique Azure names stable by hashing the immutable resource UID. */}}
             {{ $postfix := trunc 6 (sha256sum (printf "%s" $xr.metadata.uid)) }}
-            {{ $resourceLabel := $xrName }}
-            {{/* App Service plan names (Microsoft.Web/serverfarms) cap out at 40 characters, and the
-                 plan name below is the function name plus a "-plan" suffix, so the sanitized instance
-                 name is truncated hard to leave room for both. */}}
+            {{/* Leave room for the -plan suffix within the 40-character Service Plan limit. */}}
             {{ $sanitizedXrName := trimSuffix "-" (trunc 20 (regexReplaceAll "[^a-z0-9-]" ($xrName | lower) "")) }}
             {{ $functionName := printf "fn-%s-%s" $sanitizedXrName $postfix }}
             {{ $packageRevision := trunc 10 (sha256sum (printf "%s:%s" $packageURL $packageSHA256)) }}
             {{ $packageDeploymentName := printf "%s-deploy-%s" $functionName $packageRevision }}
             {{ $packageDeploymentResourceName := printf "package-deployment-%s" $packageRevision }}
-            {{/* FunctionAppFlexConsumption expects crossplane.io/external-name to contain only the
-                 Azure site name. The provider combines it with the subscription and resource group
-                 when constructing the Microsoft.Web/sites resource ID. */}}
             {{ $planResourceName := printf "%s-plan" $functionName }}
             {{ $storageLabel := printf "%s-storage" $xrName }}
             {{ if gt (len $storageLabel) 55 }}
             {{ $storageLabel = printf "%s-%s-storage" ($xrName | trunc 38 | trimSuffix "-") $postfix }}
             {{ end }}
             {{ $storageAccountResourceName := printf "%s-account" $storageLabel }}
-            {{/* Storage Account names may contain only lowercase letters and digits (no hyphens) and
-                 are capped at 24 characters - tight enough that the instance name is truncated hard to
-                 leave room for the same uniqueness postfix used above. */}}
+            {{/* Storage Account names are limited to 24 lowercase alphanumeric characters. */}}
             {{ $storageAccountExternalName := printf "%s%s" (trunc 18 (regexReplaceAll "[^a-z0-9]" ($xrName | lower) "")) $postfix }}
             {{ $containerResourceName := printf "%s-deployments" $storageLabel }}
             {{ $containerName := "deployments" }}
@@ -132,10 +111,8 @@ spec:
             {{ $functionReady = true }}
             {{ end }}
             {{ end }}
-            {{ if kindIs "slice" $identity }}
-            {{ if gt (len $identity) 0 }}
+            {{ if and (kindIs "slice" $identity) (gt (len $identity) 0) }}
             {{ $functionPrincipalID = dig "principalId" "" (index $identity 0) }}
-            {{ end }}
             {{ else if kindIs "map" $identity }}
             {{ $functionPrincipalID = dig "principalId" "" $identity }}
             {{ end }}
@@ -153,8 +130,7 @@ spec:
             {{ $hostKeysRefreshToken := dateInZone "2006-01-02" now "UTC" }}
             {{ $functionKeys := dict }}
             {{ if $hostKeysOutputContent }}
-            {{ $hostKeysOutputs := fromJson $hostKeysOutputContent }}
-            {{ $functionKeys = dig "functionKeys" "value" dict $hostKeysOutputs }}
+            {{ $functionKeys = dig "functionKeys" "value" dict (fromJson $hostKeysOutputContent) }}
             {{ end }}
             {{ $defaultFunctionKey := dig "default" "" $functionKeys }}
 
@@ -167,12 +143,12 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: service-plan
                 crossplane.io/external-name: {{ $functionName }}-plan
               labels:
-                catalog.cluster.local/azure-function: {{ $resourceLabel }}
+                catalog.cluster.local/azure-function: {{ $xrName }}
             spec:
               forProvider:
                 location: {{ $location | quote }}
                 osType: Linux
-                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                resourceGroupName: {{ index $environment "resourcegroup" }}
                 skuName: FC1
                 tags:
                   source: crossplane
@@ -181,11 +157,7 @@ spec:
                   composite: {{ $xr.metadata.uid }}
 
             ---
-            # Dedicated, private storage account holding Function host metadata and the deployment
-            # package container. It is not a catalog resource: nothing outside this composition ever
-            # needs to reference it, so it is composed directly here rather than through the
-            # AzureStorageV2 catalog item, keeping its resolved ID and blob endpoint available to this
-            # same pipeline without needing a cross-composition resource lookup.
+            # Dedicated storage keeps its ID and endpoint available within this composition.
             apiVersion: storage.azure.m.upbound.io/v1beta1
             kind: Account
             metadata:
@@ -199,7 +171,7 @@ spec:
                 catalog.cluster.local/function-host-storage: "true"
             spec:
               forProvider:
-                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                resourceGroupName: {{ index $environment "resourcegroup" }}
                 location: {{ $location | quote }}
                 accountReplicationType: LRS
                 accountTier: Standard
@@ -225,9 +197,9 @@ spec:
                 crossplane.io/external-name: {{ $storageLabel }}-blob
             spec:
               forProvider:
-                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
-                subnetId: "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $.context "apiextensions.crossplane.io/environment" "network-name" }}/subnets/default"
-                location: {{ index $.context "apiextensions.crossplane.io/environment" "network-location" }} # needs to be the same region as the network
+                resourceGroupName: {{ index $environment "resourcegroup" }}
+                subnetId: "/subscriptions/{{ index $environment "network-subscription" }}/resourceGroups/{{ index $environment "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $environment "network-name" }}/subnets/default"
+                location: {{ index $environment "network-location" }} # needs to be the same region as the network
                 customNetworkInterfaceName: {{ $storageLabel }}-blob-nic
                 privateServiceConnection:
                   isManualConnection: false
@@ -238,7 +210,7 @@ spec:
                 privateDnsZoneGroup:
                   name: default
                   privateDnsZoneIds:
-                    - "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+                    - "/subscriptions/{{ index $environment "network-subscription" }}/resourceGroups/{{ index $environment "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
                 tags:
                   source: crossplane
                   xr-name: {{ $xrName }}
@@ -263,16 +235,11 @@ spec:
                     catalog.cluster.local/function-host-storage: "true"
                   namespace: {{ $namespace }}
 
-            {{/* Surface the generated Azure app name and where to publish code, so
-                 whoever/whatever deploys this Function App (func core tools, the Azure/functions-action
-                 GitHub Action, az cli, ...) doesn't have to reconstruct it by hand. This document has no
-                 gotemplating.fn.crossplane.io/composition-resource-name annotation and matches the XR's
-                 own apiVersion/kind, so function-go-templating patches the composite's status with it
-                 instead of composing a resource. */}}
+            {{/* Matching the XR kind without a resource-name annotation patches its status. */}}
             ---
             apiVersion: catalog.cluster.local/v2
             kind: AzureFunctionFlexConsumption
-            {{ if or (not $flexConsumptionSubnetID) (and $packageURL (not $packageDeployed)) }}
+            {{ if or (not $flexConsumptionSubnetID) (not $packageDeployed) }}
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/ready: "False"
@@ -313,12 +280,12 @@ spec:
                 maximumInstanceCount: 40
                 location: {{ $location | quote }}
                 publicNetworkAccessEnabled: true
-                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                resourceGroupName: {{ index $environment "resourcegroup" }}
                 runtimeName: {{ $runtimeName | quote }}
                 runtimeVersion: {{ $runtimeVersion | quote }}
                 servicePlanIdSelector:
                   matchLabels:
-                    catalog.cluster.local/azure-function: {{ $resourceLabel }}
+                    catalog.cluster.local/azure-function: {{ $xrName }}
                 siteConfig:
                   http2Enabled: true
                   minimumTlsVersion: "1.2"
@@ -379,7 +346,7 @@ spec:
             spec:
               forProvider:
                 scope: {{ $assignment.scope | quote }}
-                roleDefinitionName: {{ default "Azure Kubernetes Service Contributor Role" (dig "roleDefinitionName" "" $assignment) | quote }}
+                roleDefinitionName: {{ $assignment.roleDefinitionName | quote }}
                 principalId: {{ $functionPrincipalID | quote }}
                 principalType: ServicePrincipal
                 skipServicePrincipalAadCheck: true
@@ -415,7 +382,7 @@ spec:
             {{/* A package is deployed only after the Function App and its host-storage access are ready.
                  The Job reads the registry credentials distributed to every node by registry-operator and
                  uses the node pool's existing Azure managed identity. Azure CLI owns OneDeploy and polling. */}}
-            {{ if and $packageURL $functionReady $blobRoleAssignmentReady }}
+            {{ if and $functionReady $blobRoleAssignmentReady }}
             ---
             apiVersion: batch/v1
             kind: Job
@@ -429,14 +396,14 @@ spec:
             {{ end }}
               labels:
                 app.kubernetes.io/name: azure-function-package-deployment
-                catalog.cluster.local/azure-function: {{ $resourceLabel }}
+                catalog.cluster.local/azure-function: {{ $xrName }}
             spec:
               backoffLimit: 3
               template:
                 metadata:
                   labels:
                     app.kubernetes.io/name: azure-function-package-deployment
-                    catalog.cluster.local/azure-function: {{ $resourceLabel }}
+                    catalog.cluster.local/azure-function: {{ $xrName }}
                 spec:
                   restartPolicy: Never
                   containers:
@@ -611,14 +578,10 @@ spec:
             {{ $hostname := dig "status" "atProvider" "defaultHostname" "" $function }}
             {{ if $hostname }}
             data:
-            {{ if $packageURL }}
               deployment-note: {{ printf "The catalog deploys %s automatically through Flex Consumption OneDeploy" $packageURL | b64enc }}
               package: {{ $packageURL | b64enc }}
             {{ if $packageSHA256 }}
               package-sha256: {{ $packageSHA256 | b64enc }}
-            {{ end }}
-            {{ else }}
-              deployment-note: {{ printf "Run from your Function project directory: func azure functionapp publish %s" $functionName | b64enc }}
             {{ end }}
               host: {{ $hostname | b64enc }}
               name: {{ $functionName | b64enc }}

@@ -34,11 +34,9 @@ spec:
           template: |
 
             {{ $xr := .observed.composite.resource }}
-            {{ $kind := $xr.kind }}
             {{ $xrName := $xr.metadata.name }}
             {{ $namespace := $xr.metadata.namespace }}
             {{ $params := $xr.spec.parameters }}
-            {{ $location := default "Switzerland North" $params.location }}
             {{ $account := .observed.resources.account }}
             {{/* Storage Account names are a globally-unique DNS label restricted to lowercase letters
                  and digits (no hyphens) and capped at 24 characters, so naming it from the plain
@@ -59,13 +57,10 @@ spec:
                 crossplane.io/external-name: {{ $storageAccountExternalName }}
               labels:
                 catalog.cluster.local/azure-storage: {{ $xrName }}
-                {{ if and (eq $location "Switzerland North") (not (default false $params.public)) }}
-                catalog.cluster.local/function-host-storage: "true"
-                {{ end }}
             spec:
               forProvider:
                 resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
-                location: {{ $location }} # called Region in Azure UI
+                location: {{ default "Switzerland North" $params.location }} # called Region in Azure UI
                 accountReplicationType: {{ default "LRS" $params.accountReplicationType }} # called Replication in Azure UI
                 accountTier: {{ default "Standard" $params.accountTier }} # called Performance in Azure UI
                 publicNetworkAccessEnabled: {{ default "false" $params.public }}
@@ -73,7 +68,7 @@ spec:
                 tags:
                   source: crossplane
                   xr-name: {{ $xrName }}
-                  xr-kind: {{ $kind }}
+                  xr-kind: {{ $xr.kind }}
                   xr-api-version: {{ $xr.apiVersion }}
                   xr-namespace: {{ $namespace }}
                   composite: {{ $xr.metadata.uid }}

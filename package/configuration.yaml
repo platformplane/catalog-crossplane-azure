@@ -16,8 +16,6 @@ spec:
       version: ">=v2.0.0"
     - provider: xpkg.upbound.io/upbound/provider-azure-network
       version: ">=v2.0.0"
-    - provider: xpkg.upbound.io/upbound/provider-azure-cognitiveservices
-      version: ">=v2.0.0"
     - provider: xpkg.upbound.io/upbound/provider-azure-web
       version: ">=v2.0.0"
     - provider: xpkg.upbound.io/upbound/provider-azure-keyvault
