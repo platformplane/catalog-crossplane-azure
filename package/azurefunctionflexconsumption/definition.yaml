@@ -36,9 +36,6 @@ spec:
                   x-kubernetes-preserve-unknown-fields: true
                 parameters:
                   type: object
-                  x-kubernetes-validations:
-                    - rule: "has(self.package) == has(self.packageSha256)"
-                      message: "package and packageSha256 must be supplied together."
                   properties:
                     location:
                       type: string
@@ -71,13 +68,13 @@ spec:
                     package:
                       type: string
                       format: uri
-                      description: "Full HTTPS download URL of an Azure Function deployment ZIP in the current space's private GitLab Generic Package registry. The URL includes the project, package name, immutable version, and ZIP filename. Change the URL and SHA-256 to deploy a new package."
+                      description: "Required full HTTPS download URL of an Azure Function deployment ZIP in the current space's private GitLab Generic Package registry. The URL includes the project, package name, immutable version, and ZIP filename. Change the URL to deploy a new package."
                       display-name: "Package URL"
                       maxLength: 2048
                       pattern: '^https://[^/?#]+/api/v4/projects/[^/?#]+/packages/generic/[^/?#]+/[^/?#]+/[^/?#]+\.zip$'
                     packageSha256:
                       type: string
-                      description: "Lowercase SHA-256 digest used to verify the package before deployment."
+                      description: "Optional lowercase SHA-256 digest used to verify the package before deployment. Recommended when available."
                       display-name: "Package SHA-256"
                       minLength: 64
                       maxLength: 64
@@ -142,6 +139,7 @@ spec:
                       x-kubernetes-preserve-unknown-fields: true
                   required:
                     - runtimeName
+                    - package
               required:
                 - parameters
             status:
@@ -154,5 +152,5 @@ spec:
                   display-name: "Function App Name"
                 deploymentContainerEndpoint:
                   type: string
-                  description: "Blob endpoint of the private container from which this Function App reads its code package. When package and packageSha256 are set, the selected ZIP is deployed automatically through Flex Consumption OneDeploy. Empty until the dedicated storage account and container have been created."
+                  description: "Blob endpoint of the private container from which this Function App reads its code package. When package is set, the selected ZIP is deployed automatically through Flex Consumption OneDeploy. Empty until the dedicated storage account and container have been created."
                   display-name: "Deployment Container Endpoint"

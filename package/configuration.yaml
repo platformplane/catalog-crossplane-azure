@@ -22,6 +22,8 @@ spec:
       version: ">=v2.0.0"
     - provider: xpkg.upbound.io/upbound/provider-azure-keyvault
       version: ">=v2.0.0"
+    - provider: xpkg.upbound.io/upbound/provider-azure-resources
+      version: ">=v2.0.0"
     - function: xpkg.crossplane.io/crossplane-contrib/function-go-templating
       version: ">=v0.12.0"
     - function: xpkg.crossplane.io/crossplane-contrib/function-auto-ready

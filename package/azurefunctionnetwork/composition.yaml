@@ -71,37 +71,26 @@ spec:
                     serviceDelegation:
                       name: Microsoft.App/environments
 
-            {{ $appServiceSubnet := dig "resources" "app-service-subnet" "resource" dict .observed }}
-            {{ $appServiceSubnetId := "" }}
-            {{ $observedAppServiceSubnetId := dig "status" "atProvider" "id" "" $appServiceSubnet }}
-            {{ $appServiceSubnetReady := false }}
-            {{ range $condition := dig "status" "conditions" list $appServiceSubnet }}
+            {{ $subnetIds := dict "appServiceSubnetId" "" "flexConsumptionSubnetId" "" }}
+            {{ range $statusField, $resourceName := dict "appServiceSubnetId" "app-service-subnet" "flexConsumptionSubnetId" "flex-consumption-subnet" }}
+            {{ $subnet := dig "resources" $resourceName "resource" dict .observed }}
+            {{ $subnetReady := false }}
+            {{ range $condition := dig "status" "conditions" list $subnet }}
             {{ if and (eq (dig "type" "" $condition) "Ready") (eq (dig "status" "" $condition) "True") }}
-            {{ $appServiceSubnetReady = true }}
+            {{ $subnetReady = true }}
             {{ end }}
             {{ end }}
-            {{ if and $appServiceSubnetReady $observedAppServiceSubnetId }}
-            {{ $appServiceSubnetId = $observedAppServiceSubnetId }}
+            {{ if $subnetReady }}
+            {{ $_ := set $subnetIds $statusField (dig "status" "atProvider" "id" "" $subnet) }}
             {{ end }}
-            {{ $flexConsumptionSubnet := dig "resources" "flex-consumption-subnet" "resource" dict .observed }}
-            {{ $flexConsumptionSubnetId := "" }}
-            {{ $observedFlexConsumptionSubnetId := dig "status" "atProvider" "id" "" $flexConsumptionSubnet }}
-            {{ $flexConsumptionSubnetReady := false }}
-            {{ range $condition := dig "status" "conditions" list $flexConsumptionSubnet }}
-            {{ if and (eq (dig "type" "" $condition) "Ready") (eq (dig "status" "" $condition) "True") }}
-            {{ $flexConsumptionSubnetReady = true }}
-            {{ end }}
-            {{ end }}
-            {{ if and $flexConsumptionSubnetReady $observedFlexConsumptionSubnetId }}
-            {{ $flexConsumptionSubnetId = $observedFlexConsumptionSubnetId }}
             {{ end }}
 
             ---
             apiVersion: azure.platformplane.io/v1alpha1
             kind: FunctionNetwork
             status:
-              appServiceSubnetId: {{ $appServiceSubnetId | quote }}
-              flexConsumptionSubnetId: {{ $flexConsumptionSubnetId | quote }}
+              appServiceSubnetId: {{ get $subnetIds "appServiceSubnetId" | quote }}
+              flexConsumptionSubnetId: {{ get $subnetIds "flexConsumptionSubnetId" | quote }}
 
     - step: automatically-detect-readiness
       functionRef:
