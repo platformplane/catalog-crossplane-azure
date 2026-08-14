@@ -38,14 +38,16 @@ spec:
             {{ $namespace := $xr.metadata.namespace }}
             {{ $params := $xr.spec.parameters }}
             {{ $account := .observed.resources.account }}
-            {{/* Storage Account names are a globally-unique DNS label restricted to lowercase letters
-                 and digits (no hyphens) and capped at 24 characters, so naming it from the plain
-                 instance name risks colliding with another cluster/namespace that reused the same
-                 friendly name. Truncate it hard and append a short hash of the immutable resource UID
-                 as a "random" postfix: stable across reconciles (so the external-name never drifts)
-                 but effectively unique per instance. */}}
             {{ $postfix := trunc 6 (sha256sum (printf "%s" $xr.metadata.uid)) }}
             {{ $storageAccountExternalName := printf "%s%s" (trunc 18 (regexReplaceAll "[^a-z0-9]" ($xrName | lower) "")) $postfix }}
+            {{ $environment := index $.context "apiextensions.crossplane.io/environment" }}
+            {{ $resourceGroup := index $environment "resourcegroup" }}
+            {{/* The private endpoints and their DNS zones all live in the shared platform network, so
+                 build the two invariant resource-ID prefixes once instead of per service. */}}
+            {{ $networkResourceGroupID := printf "/subscriptions/%s/resourceGroups/%s" (index $environment "network-subscription") (index $environment "network-resourcegroup") }}
+            {{ $subnetID := printf "%s/providers/Microsoft.Network/virtualNetworks/%s/subnets/default" $networkResourceGroupID (index $environment "network-name") }}
+            {{ $privateDNSZonePrefix := printf "%s/providers/Microsoft.Network/privateDnsZones" $networkResourceGroupID }}
+            {{ $commonTags := dict "source" "crossplane" "xr-name" $xrName "xr-kind" $xr.kind "xr-api-version" $xr.apiVersion "xr-namespace" $namespace "composite" $xr.metadata.uid }}
 
             apiVersion: storage.azure.m.upbound.io/v1beta1
             kind: Account
@@ -59,19 +61,14 @@ spec:
                 catalog.cluster.local/azure-storage: {{ $xrName }}
             spec:
               forProvider:
-                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
+                resourceGroupName: {{ $resourceGroup }}
                 location: {{ default "Switzerland North" $params.location }} # called Region in Azure UI
                 accountReplicationType: {{ default "LRS" $params.accountReplicationType }} # called Replication in Azure UI
                 accountTier: {{ default "Standard" $params.accountTier }} # called Performance in Azure UI
                 publicNetworkAccessEnabled: {{ default "false" $params.public }}
                 allowNestedItemsToBePublic: false
                 tags:
-                  source: crossplane
-                  xr-name: {{ $xrName }}
-                  xr-kind: {{ $xr.kind }}
-                  xr-api-version: {{ $xr.apiVersion }}
-                  xr-namespace: {{ $namespace }}
-                  composite: {{ $xr.metadata.uid }}
+            {{ $commonTags | toYaml | nindent 18 }}
               writeConnectionSecretToRef:
                 name: {{ $xrName }}-connection-secret
 
@@ -87,9 +84,9 @@ spec:
                 crossplane.io/external-name: {{ $xrName }}-{{ $service }}
             spec:
               forProvider:
-                resourceGroupName: {{ index $.context "apiextensions.crossplane.io/environment" "resourcegroup" }}
-                subnetId: "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $.context "apiextensions.crossplane.io/environment" "network-name" }}/subnets/default"
-                location: {{ index $.context "apiextensions.crossplane.io/environment" "network-location" }} # needs to be the same region as the network
+                resourceGroupName: {{ $resourceGroup }}
+                subnetId: {{ $subnetID | quote }}
+                location: {{ index $environment "network-location" }} # needs to be the same region as the network
                 customNetworkInterfaceName: {{ $xrName }}-{{ $service }}-nic
                 privateServiceConnection:
                   isManualConnection: false
@@ -100,14 +97,9 @@ spec:
                 privateDnsZoneGroup:
                   name: default
                   privateDnsZoneIds:
-                    - "/subscriptions/{{ index $.context "apiextensions.crossplane.io/environment" "network-subscription" }}/resourceGroups/{{ index $.context "apiextensions.crossplane.io/environment" "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/privatelink.{{ $service }}.core.windows.net"
+                    - {{ printf "%s/privatelink.%s.core.windows.net" $privateDNSZonePrefix $service | quote }}
                 tags:
-                  source: crossplane
-                  xr-name: {{ $xrName }}
-                  xr-kind: {{ $kind }}
-                  xr-api-version: {{ $xr.apiVersion }}
-                  xr-namespace: {{ $namespace }}
-                  composite: {{ $xr.metadata.uid }}
+            {{ $commonTags | toYaml | nindent 18 }}
             {{ end }}
 
             ---

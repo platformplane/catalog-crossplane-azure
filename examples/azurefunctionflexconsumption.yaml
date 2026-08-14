@@ -4,10 +4,8 @@ metadata:
   name: azurefunctionflexconsumption-sample
 spec:
   parameters:
-    location: Switzerland North
     runtimeName: node
     runtimeVersion: "20"
-    # Required: immutable ZIP from this space's private GitLab Generic Package registry.
     package: https://gitlab.example.com/api/v4/projects/group%2Fproject/packages/generic/function/1.0.0/function.zip
     # packageSha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef # optional
     environmentVariables:

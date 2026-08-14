@@ -39,20 +39,17 @@ spec:
                  Normalizing absent values here also keeps later range/with blocks from depending on
                  Go template's <no value> behaviour. */}}
             {{ $managedIdentityRoleAssignments := dig "managedIdentityRoleAssignments" (list) $params }}
-            {{ $keyVaultAccessPolicy := dig "keyVaultAccessPolicy" (dict) $params }}
-            {{ $keyVaultID := dig "keyVaultId" "" $keyVaultAccessPolicy }}
-            {{ $keyVaultTenantID := dig "tenantId" "" $keyVaultAccessPolicy }}
-            {{ $keyVaultIDValid := and (kindIs "string" $keyVaultID) (regexMatch "^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft.KeyVault/vaults/[^/]+$" $keyVaultID) }}
-            {{ $keyVaultTenantIDValid := and (kindIs "string" $keyVaultTenantID) (regexMatch "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" $keyVaultTenantID) }}
             {{ $environmentVariables := dig "environmentVariables" (list) $params }}
             {{ $environment := index $.context "apiextensions.crossplane.io/environment" }}
+            {{ $resourceGroup := index $environment "resourcegroup" }}
+            {{ $location := index $environment "network-location" }}
+            {{ $commonTags := dict "source" "crossplane" "xr-name" $xrName "xr-namespace" $namespace "composite" $xr.metadata.uid }}
 
             {{/* The operator publishes this only after creating the delegated integration subnet.
                  Until then, create the independent plan and storage resources but not a Function App
                  that could not reach its private host storage. */}}
             {{ $flexConsumptionSubnetID := dig "flex-consumption-subnet-id" "" $environment }}
-            {{ $location := default "Switzerland North" (dig "location" "" $params) }}
-            {{ $runtimeName := dig "runtimeName" "" $params }}
+            {{ $runtimeName := $params.runtimeName }}
             {{ $runtimeDefaultVersions := dict "dotnet-isolated" "8.0" "java" "17" "node" "20" "powershell" "7.4" "python" "3.11" "custom" "1.0" }}
             {{ $runtimeVersion := default (get $runtimeDefaultVersions $runtimeName) (dig "runtimeVersion" "" $params) }}
             {{ $packageURL := $params.package }}
@@ -105,29 +102,28 @@ spec:
             {{ $function := dig "resources" "function-app" "resource" dict .observed }}
             {{ $identity := dig "status" "atProvider" "identity" "" $function }}
             {{ $functionPrincipalID := "" }}
-            {{ $functionReady := false }}
-            {{ range $condition := dig "status" "conditions" (list) $function }}
-            {{ if and (eq (dig "type" "" $condition) "Ready") (eq (dig "status" "" $condition) "True") }}
-            {{ $functionReady = true }}
-            {{ end }}
-            {{ end }}
             {{ if and (kindIs "slice" $identity) (gt (len $identity) 0) }}
             {{ $functionPrincipalID = dig "principalId" "" (index $identity 0) }}
             {{ else if kindIs "map" $identity }}
             {{ $functionPrincipalID = dig "principalId" "" $identity }}
             {{ end }}
-            {{ $blobRoleAssignment := dig "resources" "role-assignment-blob" "resource" dict .observed }}
-            {{ $blobRoleAssignmentReady := false }}
-            {{ range $condition := dig "status" "conditions" (list) $blobRoleAssignment }}
+            {{/* Ready state of every composed resource a later render step has to wait for. Add a
+                 resource name here rather than repeating the condition scan per resource. */}}
+            {{ $ready := dict }}
+            {{ range $resourceName := list "function-app" "role-assignment-blob" }}
+            {{ $_ := set $ready $resourceName false }}
+            {{ range $condition := dig "resources" $resourceName "resource" "status" "conditions" (list) $.observed }}
             {{ if and (eq (dig "type" "" $condition) "Ready") (eq (dig "status" "" $condition) "True") }}
-            {{ $blobRoleAssignmentReady = true }}
+            {{ $_ := set $ready $resourceName true }}
+            {{ end }}
             {{ end }}
             {{ end }}
             {{ $packageDeployment := dig "resources" $packageDeploymentResourceName "resource" dict .observed }}
-            {{ $packageDeployed := and (eq (dig "metadata" "name" "" $packageDeployment) $packageDeploymentName) (gt (int (dig "status" "succeeded" 0 $packageDeployment)) 0) }}
+            {{/* The composition resource name embeds the package revision, so anything observed under
+                 it already belongs to the package currently requested. */}}
+            {{ $packageDeployed := gt (int (dig "status" "succeeded" 0 $packageDeployment)) 0 }}
             {{ $hostKeysDeployment := dig "resources" "function-host-keys" "resource" dict .observed }}
             {{ $hostKeysOutputContent := dig "status" "atProvider" "outputContent" "" $hostKeysDeployment }}
-            {{ $hostKeysRefreshToken := dateInZone "2006-01-02" now "UTC" }}
             {{ $functionKeys := dict }}
             {{ if $hostKeysOutputContent }}
             {{ $functionKeys = dig "functionKeys" "value" dict (fromJson $hostKeysOutputContent) }}
@@ -148,13 +144,10 @@ spec:
               forProvider:
                 location: {{ $location | quote }}
                 osType: Linux
-                resourceGroupName: {{ index $environment "resourcegroup" }}
+                resourceGroupName: {{ $resourceGroup }}
                 skuName: FC1
                 tags:
-                  source: crossplane
-                  xr-name: {{ $xrName }}
-                  xr-namespace: {{ $namespace }}
-                  composite: {{ $xr.metadata.uid }}
+            {{ $commonTags | toYaml | nindent 18 }}
 
             ---
             # Dedicated storage keeps its ID and endpoint available within this composition.
@@ -171,17 +164,14 @@ spec:
                 catalog.cluster.local/function-host-storage: "true"
             spec:
               forProvider:
-                resourceGroupName: {{ index $environment "resourcegroup" }}
+                resourceGroupName: {{ $resourceGroup }}
                 location: {{ $location | quote }}
                 accountReplicationType: LRS
                 accountTier: Standard
                 publicNetworkAccessEnabled: false
                 allowNestedItemsToBePublic: false
                 tags:
-                  source: crossplane
-                  xr-name: {{ $xrName }}
-                  xr-namespace: {{ $namespace }}
-                  composite: {{ $xr.metadata.uid }}
+            {{ $commonTags | toYaml | nindent 18 }}
 
             {{/* These functions need Blob storage both for the Flex deployment package and for
                  AzureWebJobsStorage host metadata. Queue and Table private endpoints are unnecessary
@@ -197,14 +187,14 @@ spec:
                 crossplane.io/external-name: {{ $storageLabel }}-blob
             spec:
               forProvider:
-                resourceGroupName: {{ index $environment "resourcegroup" }}
+                resourceGroupName: {{ $resourceGroup }}
                 subnetId: "/subscriptions/{{ index $environment "network-subscription" }}/resourceGroups/{{ index $environment "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $environment "network-name" }}/subnets/default"
                 location: {{ index $environment "network-location" }} # needs to be the same region as the network
                 customNetworkInterfaceName: {{ $storageLabel }}-blob-nic
                 privateServiceConnection:
                   isManualConnection: false
                   name: {{ $storageLabel }}-blob
-                  privateConnectionResourceId: {{ dig "status" "atProvider" "id" "" $account | quote }}
+                  privateConnectionResourceId: {{ $accountID | quote }}
                   subresourceNames:
                     - blob
                 privateDnsZoneGroup:
@@ -212,10 +202,7 @@ spec:
                   privateDnsZoneIds:
                     - "/subscriptions/{{ index $environment "network-subscription" }}/resourceGroups/{{ index $environment "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
                 tags:
-                  source: crossplane
-                  xr-name: {{ $xrName }}
-                  xr-namespace: {{ $namespace }}
-                  composite: {{ $xr.metadata.uid }}
+            {{ $commonTags | toYaml | nindent 18 }}
 
             ---
             apiVersion: storage.azure.m.upbound.io/v1beta1
@@ -280,7 +267,7 @@ spec:
                 maximumInstanceCount: 40
                 location: {{ $location | quote }}
                 publicNetworkAccessEnabled: true
-                resourceGroupName: {{ index $environment "resourcegroup" }}
+                resourceGroupName: {{ $resourceGroup }}
                 runtimeName: {{ $runtimeName | quote }}
                 runtimeVersion: {{ $runtimeVersion | quote }}
                 servicePlanIdSelector:
@@ -294,10 +281,7 @@ spec:
                 storageContainerType: blobContainer
                 storageContainerEndpoint: {{ $storageContainerEndpoint | quote }}
                 tags:
-                  source: crossplane
-                  xr-name: {{ $xrName }}
-                  xr-namespace: {{ $namespace }}
-                  composite: {{ $xr.metadata.uid }}
+            {{ $commonTags | toYaml | nindent 18 }}
                 webdeployPublishBasicAuthenticationEnabled: false
                 virtualNetworkSubnetId: {{ $flexConsumptionSubnetID | quote }}
 
@@ -351,38 +335,15 @@ spec:
                 principalType: ServicePrincipal
                 skipServicePrincipalAadCheck: true
             {{ end }}
-
-            {{/* ZuluPlane's existing Key Vault uses legacy access policies. Keep this separate from
-                 Azure RBAC role assignments and grant only the one permission App Service Key Vault
-                 references require: Get. */}}
-            {{ if and $keyVaultIDValid $keyVaultTenantIDValid }}
-            {{ $keyVaultPolicyResourceName := printf "%s-key-vault" $xrName }}
-            {{ if gt (len $keyVaultPolicyResourceName) 63 }}
-            {{ $keyVaultPolicyResourceName = printf "%s-%s-key-vault" (trunc 40 $xrName | trimSuffix "-") $postfix }}
-            {{ end }}
-            ---
-            apiVersion: keyvault.azure.m.upbound.io/v1beta1
-            kind: AccessPolicy
-            metadata:
-              name: {{ $keyVaultPolicyResourceName }}
-              namespace: {{ $namespace }}
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: key-vault-access-policy
-            spec:
-              forProvider:
-                keyVaultId: {{ $keyVaultID | quote }}
-                objectId: {{ $functionPrincipalID | quote }}
-                tenantId: {{ $keyVaultTenantID | quote }}
-                secretPermissions:
-                  - Get
-            {{ end }}
             {{ end }}
             {{ end }}
 
             {{/* A package is deployed only after the Function App and its host-storage access are ready.
                  The Job reads the registry credentials distributed to every node by registry-operator and
-                 uses the node pool's existing Azure managed identity. Azure CLI owns OneDeploy and polling. */}}
-            {{ if and $functionReady $blobRoleAssignmentReady }}
+                 uses the node pool's existing Azure managed identity. Azure CLI owns OneDeploy and polling.
+                 A succeeded Job stays in desired state so a transient readiness flap cannot delete it and
+                 re-run the whole download and OneDeploy for a package that is already live. */}}
+            {{ if or $packageDeployed (and (get $ready "function-app") (get $ready "role-assignment-blob")) }}
             ---
             apiVersion: batch/v1
             kind: Job
@@ -511,7 +472,7 @@ spec:
                         - name: AZURE_SUBSCRIPTION_ID
                           value: {{ index $environment "subscription" | quote }}
                         - name: AZURE_RESOURCE_GROUP
-                          value: {{ index $environment "resourcegroup" | quote }}
+                          value: {{ $resourceGroup | quote }}
                         - name: FUNCTION_APP_NAME
                           value: {{ $functionName | quote }}
                       volumeMounts:
@@ -527,7 +488,12 @@ spec:
 
             {{/* Resolve callable host keys only after the package is live. An ARM deployment gives the
                  Azure provider a declarative listKeys call, avoiding Kubernetes API credentials in the
-                 deployment Job. Only functionKeys are retained; masterKey and systemKeys are excluded. */}}
+                 deployment Job. Only functionKeys are retained; masterKey and systemKeys are excluded.
+
+                 parametersContent is the provider's only change-detection input, so it carries the
+                 package revision: the deployment re-runs once per package rollout, which is when the
+                 keys can actually differ, instead of on every reconcile or on a wall-clock schedule.
+                 Keeping it free of `now` also makes rendering deterministic and diffable. */}}
             {{ if $packageDeployed }}
             ---
             apiVersion: resources.azure.m.upbound.io/v1beta1
@@ -541,9 +507,9 @@ spec:
             spec:
               forProvider:
                 deploymentMode: Incremental
-                resourceGroupName: {{ index $environment "resourcegroup" | quote }}
+                resourceGroupName: {{ $resourceGroup | quote }}
                 parametersContent: |
-                  {{ dict "functionAppName" (dict "value" $functionName) "refreshToken" (dict "value" $hostKeysRefreshToken) | toJson }}
+                  {{ dict "functionAppName" (dict "value" $functionName) "packageRevision" (dict "value" $packageRevision) | toJson }}
                 templateContent: |
                   {
                     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -552,7 +518,7 @@ spec:
                       "functionAppName": {
                         "type": "string"
                       },
-                      "refreshToken": {
+                      "packageRevision": {
                         "type": "string"
                       }
                     },
@@ -578,7 +544,6 @@ spec:
             {{ $hostname := dig "status" "atProvider" "defaultHostname" "" $function }}
             {{ if $hostname }}
             data:
-              deployment-note: {{ printf "The catalog deploys %s automatically through Flex Consumption OneDeploy" $packageURL | b64enc }}
               package: {{ $packageURL | b64enc }}
             {{ if $packageSHA256 }}
               package-sha256: {{ $packageSHA256 | b64enc }}
@@ -588,7 +553,6 @@ spec:
               url: {{ printf "https://%s" $hostname | b64enc }}
             {{ if $defaultFunctionKey }}
               function-key: {{ $defaultFunctionKey | b64enc }}
-              function-keys: {{ $functionKeys | toJson | b64enc }}
             {{ end }}
             {{ else }}
             data: {}
@@ -614,12 +578,5 @@ spec:
           - sequence:
               - "account"
               - "container"
-          - sequence:
-              - "container"
-              - "function-app"
-          - sequence:
-              - "container"
-              - "role-assignment-blob"
-          - sequence:
               - "function-app"
               - "role-assignment-blob"
