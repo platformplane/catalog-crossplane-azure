@@ -10,7 +10,7 @@ spec:
       catalog.cluster.local/kind: AzureFunctionFlexConsumption
     annotations:
       catalog.cluster.local/title: "Azure Function (Flex Consumption)"
-      catalog.cluster.local/description: "Azure Functions on the Flex Consumption plan: fast, pay-per-use elastic scaling, deploying your code directly rather than a container image. Select a GitLab Generic Package ZIP for automatic deployment, or publish manually with a Flex Consumption OneDeploy-compatible tool."
+      catalog.cluster.local/description: "Deploy an Azure Function App on the Flex Consumption plan from a ZIP package."
       catalog.cluster.local/icon: "PHN2ZyB3aWR0aD0iODAwcHgiIGhlaWdodD0iODAwcHgiIGZpbGw9IiMwMDc4RDQiIHJvbGU9ImltZyIgdmlld0JveD0iMCAwIDI0IDI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0xMC41MzcuOTA0TDYuNjAyIDEyLjA0bDQuNzk4LjAzNy0zLjc0OCAxMS4wMTh2LjAwMkwxNy45OTYgOC4zOWgtNS4wMjJMMTcuODQ3LjkwM2gtMy44MjR6TTYuOTAzIDQuOTFhLjU4NS41ODUgMCAwIDAtLjQxMi4xN0wuMTU1IDExLjI4NWEuNjgyLjY4MiAwIDAgMCAwIC44NjVsNi40NDggNi4zOTZhLjYyNS42MjUgMCAwIDAgLjgyNCAwIC42MzguNjM4IDAgMCAwIDAtLjg2NWwtNS40MzYtNS41M2EuNjQxLjY0MSAwIDAgMSAwLS44NjVsNS4zMjQtNS4zNDRhLjU3NC41NzQgMCAwIDAgMC0uODY1LjU4Ni41ODYgMCAwIDAtLjQxMi0uMTY5em0xMC4xOTMgMGEuNTg1LjU4NSAwIDAgMC0uNDEyLjE3LjU3Mi41NzIgMCAwIDAgMCAuODY0bDUuNDM1IDUuMzQzYS42NC42NCAwIDAgMSAwIC44NjZsLTUuNTQ4IDUuNTNhLjY0LjY0IDAgMCAwIDAgLjg2NS42MjUuNjI1IDAgMCAwIC44MjQgMGw2LjQ1LTYuMzk2YS42OC42OCAwIDAgMCAwLS44NjVsLTYuMzM3LTYuMjA4YS41ODUuNTg1IDAgMCAwLS40MTItLjE2OXoiLz48L3N2Zz4K"
       catalog.cluster.local/maintainer: ""
       catalog.cluster.local/url: "https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan"
@@ -24,11 +24,11 @@ spec:
       referenceable: true
       schema:
         openAPIV3Schema:
-          description: AzureFunctionFlexConsumption provisions a Flex Consumption Azure Function App and its required infrastructure.
+          description: Provisions an Azure Function App on the Flex Consumption plan.
           type: object
           properties:
             spec:
-              description: AzureFunctionFlexConsumptionSpec defines the desired Function App.
+              description: Configuration for the Function App.
               type: object
               properties:
                 crossplane:
@@ -39,7 +39,7 @@ spec:
                   properties:
                     runtimeName:
                       type: string
-                      description: "Language runtime the Function App code targets. This value cannot be changed after creation."
+                      description: "Language runtime for the function. Cannot be changed after creation."
                       display-name: "Runtime"
                       x-kubernetes-validations:
                         - rule: self == oldSelf
@@ -53,25 +53,26 @@ spec:
                         - "custom"
                     runtimeVersion:
                       type: string
-                      description: "Optional runtime version matching runtimeName. When omitted, the composition uses: 8.0 for dotnet-isolated, 17 for java, 20 for node, 7.4 for powershell, 3.11 for python, and 1.0 for custom handlers."
+                      description: "Runtime version. Defaults to .NET 8, Java 17, Node.js 20, PowerShell 7.4, Python 3.11, or custom handler 1.0."
                       display-name: "Runtime Version"
                     package:
                       type: string
                       format: uri
-                      description: "Required full HTTPS download URL of an Azure Function deployment ZIP in the current space's private GitLab Generic Package registry. The URL includes the project, package name, immutable version, and ZIP filename. Change the URL to deploy a new package."
+                      description: "HTTPS URL of a function ZIP in this space's GitLab Generic Package registry. Change the URL to deploy a new version."
+                      example: "https://gitlab.zuluplane.io/api/v4/projects/<PROJECT_ID>/packages/generic/<PACKAGE_NAME>/1.0.0/<PACKAGE_NAME>.zip"
                       display-name: "Package URL"
                       maxLength: 2048
                       pattern: '^https://[^/?#]+/api/v4/projects/[^/?#]+/packages/generic/[^/?#]+/[^/?#]+/[^/?#]+\.zip$'
                     packageSha256:
                       type: string
-                      description: "Optional lowercase SHA-256 digest used to verify the package before deployment. Recommended when available."
+                      description: "Lowercase SHA-256 checksum used to verify the ZIP before deployment."
                       display-name: "Package SHA-256"
                       minLength: 64
                       maxLength: 64
-                      pattern: '^[a-f0-9]{64}$'
+                      pattern: "^[a-f0-9]{64}$"
                     environmentVariables:
                       type: array
-                      description: "Non-secret environment variables exposed as Function App settings. Use external secret integration for sensitive values."
+                      description: "Function App settings."
                       display-name: "Environment Variables"
                       x-kubernetes-list-type: map
                       x-kubernetes-list-map-keys:
@@ -83,8 +84,8 @@ spec:
                             type: string
                             minLength: 1
                             maxLength: 255
-                            description: "Only letters, numbers, periods, and underscores are allowed - no spaces or other special characters."
-                            pattern: '^[A-Za-z0-9._]+$'
+                            description: "Setting name containing letters, numbers, periods, or underscores."
+                            pattern: "^[A-Za-z0-9._]+$"
                           value:
                             type: string
                         required:
@@ -93,7 +94,7 @@ spec:
                     managedIdentityRoleAssignments:
                       type: array
                       title: "Managed Identity Role Assignments"
-                      description: "Approved Azure RBAC roles granted to the Function App's system-assigned managed identity on an existing Azure resource. Keep every scope as narrow as possible."
+                      description: "Azure roles granted to the Function App's managed identity."
                       x-kubernetes-list-type: map
                       x-kubernetes-list-map-keys:
                         - name
@@ -105,20 +106,20 @@ spec:
                             title: "Name"
                             minLength: 1
                             maxLength: 32
-                            pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
-                            description: "Stable name used to identify this role assignment inside the composition."
+                            pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                            description: "Unique name for this role assignment."
                           roleDefinitionName:
                             type: string
                             title: "Role"
-                            description: "Catalog-approved built-in Azure role."
+                            description: "Azure role to assign."
                             default: "Azure Kubernetes Service Contributor Role"
-                            pattern: '^Azure Kubernetes Service Contributor Role$'
+                            pattern: "^Azure Kubernetes Service Contributor Role$"
                           scope:
                             type: string
                             title: "Scope"
                             minLength: 1
-                            pattern: '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/[^/]+/.+$'
-                            description: "Full Azure resource ID to which the role is scoped."
+                            pattern: "^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/[^/]+/.+$"
+                            description: "Azure resource ID that receives the role assignment."
                         required:
                           - name
                           - roleDefinitionName
@@ -129,14 +130,14 @@ spec:
               required:
                 - parameters
             status:
-              description: AzureFunctionFlexConsumptionStatus surfaces details needed to publish code into this Function App.
+              description: Deployment details for the Function App.
               type: object
               properties:
                 functionAppName:
                   type: string
-                  description: "Generated Azure Function App name used for publishing and Azure resource lookup."
+                  description: "Generated name of the Function App."
                   display-name: "Function App Name"
                 deploymentContainerEndpoint:
                   type: string
-                  description: "Blob endpoint of the private container from which this Function App reads its code package. When package is set, the selected ZIP is deployed automatically through Flex Consumption OneDeploy. Empty until the dedicated storage account and container have been created."
+                  description: "Blob container endpoint used to deploy the function ZIP."
                   display-name: "Deployment Container Endpoint"
