@@ -1,0 +1,160 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: azurestoragev2.catalog.cluster.local
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.cluster.local/v2
+    kind: AzureStorageV2
+
+  writeConnectionSecretsToNamespace: crossplane-system
+
+  mode: Pipeline
+  pipeline:
+    - step: get-environment-configs
+      functionRef:
+        name: crossplane-contrib-function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Reference
+              ref:
+                name: azure-environment
+
+    - step: storage-account
+      functionRef:
+        name: crossplane-contrib-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+
+            {{ $xr := .observed.composite.resource }}
+            {{ $xrName := $xr.metadata.name }}
+            {{ $namespace := $xr.metadata.namespace }}
+            {{ $params := $xr.spec.parameters }}
+            {{ $account := .observed.resources.account }}
+            {{ $postfix := trunc 6 (sha256sum (printf "%s" $xr.metadata.uid)) }}
+            {{ $storageAccountExternalName := printf "%s%s" (trunc 18 (regexReplaceAll "[^a-z0-9]" ($xrName | lower) "")) $postfix }}
+            {{ $environment := index $.context "apiextensions.crossplane.io/environment" }}
+            {{ $resourceGroup := index $environment "resourcegroup" }}
+            {{/* The private endpoints and their DNS zones all live in the shared platform network, so
+                 build the two invariant resource-ID prefixes once instead of per service. */}}
+            {{ $networkResourceGroupID := printf "/subscriptions/%s/resourceGroups/%s" (index $environment "network-subscription") (index $environment "network-resourcegroup") }}
+            {{ $subnetID := printf "%s/providers/Microsoft.Network/virtualNetworks/%s/subnets/default" $networkResourceGroupID (index $environment "network-name") }}
+            {{ $privateDNSZonePrefix := printf "%s/providers/Microsoft.Network/privateDnsZones" $networkResourceGroupID }}
+            {{ $commonTags := dict "source" "crossplane" "xr-name" $xrName "xr-kind" $xr.kind "xr-api-version" $xr.apiVersion "xr-namespace" $namespace "composite" $xr.metadata.uid }}
+
+            apiVersion: storage.azure.m.upbound.io/v1beta1
+            kind: Account
+            metadata:
+              name: {{ $xrName }}-account
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: account
+                crossplane.io/external-name: {{ $storageAccountExternalName }}
+              labels:
+                catalog.cluster.local/azure-storage: {{ $xrName }}
+            spec:
+              forProvider:
+                resourceGroupName: {{ $resourceGroup }}
+                location: {{ default "Switzerland North" $params.location }} # called Region in Azure UI
+                accountReplicationType: {{ default "LRS" $params.accountReplicationType }} # called Replication in Azure UI
+                accountTier: {{ default "Standard" $params.accountTier }} # called Performance in Azure UI
+                publicNetworkAccessEnabled: {{ default "false" $params.public }}
+                allowNestedItemsToBePublic: false
+                tags:
+            {{ $commonTags | toYaml | nindent 18 }}
+              writeConnectionSecretToRef:
+                name: {{ $xrName }}-connection-secret
+
+            {{ range $service := list "blob" "file" "queue" "table" }}
+            ---
+            apiVersion: network.azure.m.upbound.io/v1beta1
+            kind: PrivateEndpoint
+            metadata:
+              name: {{ $xrName }}-{{ $service }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: endpoint{{ $service }}
+                crossplane.io/external-name: {{ $xrName }}-{{ $service }}
+            spec:
+              forProvider:
+                resourceGroupName: {{ $resourceGroup }}
+                subnetId: {{ $subnetID | quote }}
+                location: {{ index $environment "network-location" }} # needs to be the same region as the network
+                customNetworkInterfaceName: {{ $xrName }}-{{ $service }}-nic
+                privateServiceConnection:
+                  isManualConnection: false
+                  name: {{ $xrName }}-{{ $service }}
+                  privateConnectionResourceId: {{ $account.resource.status.atProvider.id }}
+                  subresourceNames:
+                    - {{ $service }}
+                privateDnsZoneGroup:
+                  name: default
+                  privateDnsZoneIds:
+                    - {{ printf "%s/privatelink.%s.core.windows.net" $privateDNSZonePrefix $service | quote }}
+                tags:
+            {{ $commonTags | toYaml | nindent 18 }}
+            {{ end }}
+
+            ---
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: {{ $xrName }}-connection
+              namespace: {{ $namespace }}
+              annotations:
+                {{ setResourceNameAnnotation "connection-secret" }}
+            {{ if eq $.observed.resources nil }}
+            data: {}
+            {{ else }}
+            {{- $accountName := dig "resources" "account" "resource" "metadata" "annotations" "crossplane.io/external-name" "" .observed }}
+            {{- $publicEnabled := dig "resources" "account" "resource" "status" "atProvider" "publicNetworkAccessEnabled" false .observed }}
+            {{- $accountConnection := dig "resources" "account" "connectionDetails" dict .observed }}
+            {{- $password := index $accountConnection "attribute.primary_access_key" }}
+            {{- $blobConnectionString := index $accountConnection "attribute.primary_blob_connection_string" }}
+            {{- if $accountName }}
+            data:
+              blob-host: {{ printf "%s.blob.core.windows.net" $accountName | b64enc }}
+              file-host: {{ printf "%s.file.core.windows.net" $accountName | b64enc }}
+              username: {{ $accountName | b64enc }}
+              public: {{ printf "%t" $publicEnabled | b64enc }}
+              {{ if $password }}
+              password: {{ $password }}
+              {{ end }}
+              {{ if $blobConnectionString }}
+              uri: {{ trimPrefix "DefaultEndpointsProtocol=https;BlobEndpoint=" ($blobConnectionString | b64dec) | b64enc }}
+              {{ end }}
+            {{- else }}
+            data: {}
+            {{- end }}
+            {{ end }}
+
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: crossplane-contrib-function-auto-ready
+
+    - step: enforce-creation-sequence
+      functionRef:
+        name: crossplane-contrib-function-sequencer
+      input:
+        apiVersion: sequencer.fn.crossplane.io/v1beta1
+        kind: Input
+        rules:
+          - sequence:
+              - "account"
+              - "endpointblob"
+          - sequence:
+              - "account"
+              - "endpointfile"
+          - sequence:
+              - "account"
+              - "endpointqueue"
+          - sequence:
+              - "account"
+              - "endpointtable"

@@ -1,0 +1,582 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: azurefunctionflexconsumptions.catalog.cluster.local
+spec:
+  compositeTypeRef:
+    apiVersion: catalog.cluster.local/v2
+    kind: AzureFunctionFlexConsumption
+
+  mode: Pipeline
+  pipeline:
+    - step: get-environment-configs
+      functionRef:
+        name: crossplane-contrib-function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Reference
+              ref:
+                name: azure-environment
+
+    - step: function-app
+      functionRef:
+        name: crossplane-contrib-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+
+            {{ $xr := .observed.composite.resource }}
+            {{ $xrName := $xr.metadata.name }}
+            {{ $namespace := $xr.metadata.namespace }}
+            {{ $params := $xr.spec.parameters }}
+            {{/* Optional access configuration must not replace or disable the catalog defaults.
+                 Normalizing absent values here also keeps later range/with blocks from depending on
+                 Go template's <no value> behaviour. */}}
+            {{ $managedIdentityRoleAssignments := dig "managedIdentityRoleAssignments" (list) $params }}
+            {{ $environmentVariables := dig "environmentVariables" (list) $params }}
+            {{ $environment := index $.context "apiextensions.crossplane.io/environment" }}
+            {{ $resourceGroup := index $environment "resourcegroup" }}
+            {{ $location := index $environment "network-location" }}
+            {{ $commonTags := dict "source" "crossplane" "xr-name" $xrName "xr-namespace" $namespace "composite" $xr.metadata.uid }}
+
+            {{/* The operator publishes this only after creating the delegated integration subnet.
+                 Until then, create the independent plan and storage resources but not a Function App
+                 that could not reach its private host storage. */}}
+            {{ $flexConsumptionSubnetID := dig "flex-consumption-subnet-id" "" $environment }}
+            {{ $runtimeName := $params.runtimeName }}
+            {{ $runtimeDefaultVersions := dict "dotnet-isolated" "8.0" "java" "17" "node" "20" "powershell" "7.4" "python" "3.11" "custom" "1.0" }}
+            {{ $runtimeVersion := default (get $runtimeDefaultVersions $runtimeName) (dig "runtimeVersion" "" $params) }}
+            {{ $packageURL := $params.package }}
+            {{ $packageSHA256 := dig "packageSha256" "" $params }}
+            {{/* Keep globally unique Azure names stable by hashing the immutable resource UID. */}}
+            {{ $postfix := trunc 6 (sha256sum (printf "%s" $xr.metadata.uid)) }}
+            {{/* Leave room for the -plan suffix within the 40-character Service Plan limit. */}}
+            {{ $sanitizedXrName := trimSuffix "-" (trunc 20 (regexReplaceAll "[^a-z0-9-]" ($xrName | lower) "")) }}
+            {{ $functionName := printf "fn-%s-%s" $sanitizedXrName $postfix }}
+            {{ $packageRevision := trunc 10 (sha256sum (printf "%s:%s" $packageURL $packageSHA256)) }}
+            {{ $packageDeploymentName := printf "%s-deploy-%s" $functionName $packageRevision }}
+            {{ $packageDeploymentResourceName := printf "package-deployment-%s" $packageRevision }}
+            {{ $planResourceName := printf "%s-plan" $functionName }}
+            {{ $storageLabel := printf "%s-storage" $xrName }}
+            {{ if gt (len $storageLabel) 55 }}
+            {{ $storageLabel = printf "%s-%s-storage" ($xrName | trunc 38 | trimSuffix "-") $postfix }}
+            {{ end }}
+            {{ $storageAccountResourceName := printf "%s-account" $storageLabel }}
+            {{/* Storage Account names are limited to 24 lowercase alphanumeric characters. */}}
+            {{ $storageAccountExternalName := printf "%s%s" (trunc 18 (regexReplaceAll "[^a-z0-9]" ($xrName | lower) "")) $postfix }}
+            {{ $containerResourceName := printf "%s-deployments" $storageLabel }}
+            {{ $containerName := "deployments" }}
+            {{ $connectionSecretName := printf "%s-connection" $xrName }}
+            {{ if gt (len $connectionSecretName) 63 }}
+            {{ $connectionSecretName = printf "%s-%s-connection" ($xrName | trunc 43 | trimSuffix "-") $postfix }}
+            {{ end }}
+            {{ $appSettings := dict }}
+            {{ range $variable := $environmentVariables }}
+            {{ $_ := set $appSettings $variable.key $variable.value }}
+            {{ end }}
+            {{/* Azure Functions still requires AzureWebJobsStorage for host metadata on Flex
+                 Consumption. Use the same dedicated account through the Function App's system identity;
+                 these platform-owned settings intentionally override user-provided values. The empty
+                 base setting is required by the Terraform-backed Flex Consumption provider to activate
+                 the identity-based AzureWebJobsStorage settings. */}}
+            {{ $_ := set $appSettings "AzureWebJobsStorage" "" }}
+            {{ $_ := set $appSettings "AzureWebJobsStorage__accountName" $storageAccountExternalName }}
+            {{ $_ := set $appSettings "AzureWebJobsStorage__credential" "managedidentity" }}
+
+            {{/* Read back what was observed of our own composed resources on the previous reconcile. */}}
+            {{ $account := dig "resources" "account" "resource" dict .observed }}
+            {{ $accountID := dig "status" "atProvider" "id" "" $account }}
+            {{ $accountBlobEndpoint := dig "status" "atProvider" "primaryBlobEndpoint" "" $account }}
+            {{ $container := dig "resources" "container" "resource" dict .observed }}
+            {{ $containerID := dig "status" "atProvider" "resourceManagerId" "" $container }}
+            {{ $storageContainerEndpoint := "" }}
+            {{ if $accountBlobEndpoint }}
+            {{ $storageContainerEndpoint = printf "%s/%s" (trimSuffix "/" $accountBlobEndpoint) $containerName }}
+            {{ end }}
+            {{ $function := dig "resources" "function-app" "resource" dict .observed }}
+            {{ $identity := dig "status" "atProvider" "identity" "" $function }}
+            {{ $functionPrincipalID := "" }}
+            {{ if and (kindIs "slice" $identity) (gt (len $identity) 0) }}
+            {{ $functionPrincipalID = dig "principalId" "" (index $identity 0) }}
+            {{ else if kindIs "map" $identity }}
+            {{ $functionPrincipalID = dig "principalId" "" $identity }}
+            {{ end }}
+            {{/* Ready state of every composed resource a later render step has to wait for. Add a
+                 resource name here rather than repeating the condition scan per resource. */}}
+            {{ $ready := dict }}
+            {{ range $resourceName := list "function-app" "role-assignment-blob" }}
+            {{ $_ := set $ready $resourceName false }}
+            {{ range $condition := dig "resources" $resourceName "resource" "status" "conditions" (list) $.observed }}
+            {{ if and (eq (dig "type" "" $condition) "Ready") (eq (dig "status" "" $condition) "True") }}
+            {{ $_ := set $ready $resourceName true }}
+            {{ end }}
+            {{ end }}
+            {{ end }}
+            {{ $packageDeployment := dig "resources" $packageDeploymentResourceName "resource" dict .observed }}
+            {{/* The composition resource name embeds the package revision, so anything observed under
+                 it already belongs to the package currently requested. */}}
+            {{ $packageDeployed := gt (int (dig "status" "succeeded" 0 $packageDeployment)) 0 }}
+            {{ $hostKeysDeployment := dig "resources" "function-host-keys" "resource" dict .observed }}
+            {{ $hostKeysOutputContent := dig "status" "atProvider" "outputContent" "" $hostKeysDeployment }}
+            {{ $functionKeys := dict }}
+            {{ if $hostKeysOutputContent }}
+            {{ $functionKeys = dig "functionKeys" "value" dict (fromJson $hostKeysOutputContent) }}
+            {{ end }}
+            {{ $defaultFunctionKey := dig "default" "" $functionKeys }}
+
+            apiVersion: web.azure.m.upbound.io/v1beta1
+            kind: ServicePlan
+            metadata:
+              name: {{ $planResourceName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: service-plan
+                crossplane.io/external-name: {{ $functionName }}-plan
+              labels:
+                catalog.cluster.local/azure-function: {{ $xrName }}
+            spec:
+              forProvider:
+                location: {{ $location | quote }}
+                osType: Linux
+                resourceGroupName: {{ $resourceGroup }}
+                skuName: FC1
+                tags:
+            {{ $commonTags | toYaml | nindent 18 }}
+
+            ---
+            # Dedicated storage keeps its ID and endpoint available within this composition.
+            apiVersion: storage.azure.m.upbound.io/v1beta1
+            kind: Account
+            metadata:
+              name: {{ $storageAccountResourceName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: account
+                crossplane.io/external-name: {{ $storageAccountExternalName }}
+              labels:
+                catalog.cluster.local/azure-storage: {{ $storageLabel }}
+                catalog.cluster.local/function-host-storage: "true"
+            spec:
+              forProvider:
+                resourceGroupName: {{ $resourceGroup }}
+                location: {{ $location | quote }}
+                accountReplicationType: LRS
+                accountTier: Standard
+                publicNetworkAccessEnabled: false
+                allowNestedItemsToBePublic: false
+                tags:
+            {{ $commonTags | toYaml | nindent 18 }}
+
+            {{/* These functions need Blob storage both for the Flex deployment package and for
+                 AzureWebJobsStorage host metadata. Queue and Table private endpoints are unnecessary
+                 for the HTTP and timer triggers currently deployed through this catalog item. */}}
+            ---
+            apiVersion: network.azure.m.upbound.io/v1beta1
+            kind: PrivateEndpoint
+            metadata:
+              name: {{ $storageLabel }}-blob
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: endpointblob
+                crossplane.io/external-name: {{ $storageLabel }}-blob
+            spec:
+              forProvider:
+                resourceGroupName: {{ $resourceGroup }}
+                subnetId: "/subscriptions/{{ index $environment "network-subscription" }}/resourceGroups/{{ index $environment "network-resourcegroup" }}/providers/Microsoft.Network/virtualNetworks/{{ index $environment "network-name" }}/subnets/default"
+                location: {{ index $environment "network-location" }} # needs to be the same region as the network
+                customNetworkInterfaceName: {{ $storageLabel }}-blob-nic
+                privateServiceConnection:
+                  isManualConnection: false
+                  name: {{ $storageLabel }}-blob
+                  privateConnectionResourceId: {{ $accountID | quote }}
+                  subresourceNames:
+                    - blob
+                privateDnsZoneGroup:
+                  name: default
+                  privateDnsZoneIds:
+                    - "/subscriptions/{{ index $environment "network-subscription" }}/resourceGroups/{{ index $environment "network-resourcegroup" }}/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+                tags:
+            {{ $commonTags | toYaml | nindent 18 }}
+
+            ---
+            apiVersion: storage.azure.m.upbound.io/v1beta1
+            kind: Container
+            metadata:
+              name: {{ $containerResourceName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: container
+                crossplane.io/external-name: {{ $containerName }}
+            spec:
+              forProvider:
+                containerAccessType: private
+                storageAccountNameSelector:
+                  matchLabels:
+                    catalog.cluster.local/azure-storage: {{ $storageLabel }}
+                    catalog.cluster.local/function-host-storage: "true"
+                  namespace: {{ $namespace }}
+
+            {{/* Matching the XR kind without a resource-name annotation patches its status. */}}
+            ---
+            apiVersion: catalog.cluster.local/v2
+            kind: AzureFunctionFlexConsumption
+            {{ if or (not $flexConsumptionSubnetID) (not $packageDeployed) }}
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/ready: "False"
+            {{ end }}
+            status:
+              functionAppName: {{ $functionName | quote }}
+            {{ if $storageContainerEndpoint }}
+              deploymentContainerEndpoint: {{ $storageContainerEndpoint | quote }}
+            {{ end }}
+
+            {{/* Wait for both the Flex Consumption integration subnet and the deployment container's
+                 resolved blob endpoint before creating the Function App itself: without the subnet
+                 there is no virtualNetworkSubnetId, and without the endpoint there is nowhere for it
+                 to load its code from. The service plan, storage account, and container above don't
+                 need either and are created regardless. */}}
+            {{ if and $flexConsumptionSubnetID $storageContainerEndpoint $containerID }}
+            ---
+            apiVersion: web.azure.m.upbound.io/v1beta1
+            kind: FunctionAppFlexConsumption
+            metadata:
+              name: {{ $xrName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: function-app
+                crossplane.io/external-name: {{ $functionName }}
+            spec:
+              forProvider:
+                appSettings:
+            {{ $appSettings | toYaml | nindent 18 }}
+                # Work around provider-azure-web Observe panics when Azure returns no
+                # Authentication / Authorization configuration for the Function App.
+                authSettings:
+                  enabled: false
+                httpsOnly: true
+                identity:
+                  type: SystemAssigned
+                instanceMemoryInMb: 2048
+                maximumInstanceCount: 40
+                location: {{ $location | quote }}
+                publicNetworkAccessEnabled: true
+                resourceGroupName: {{ $resourceGroup }}
+                runtimeName: {{ $runtimeName | quote }}
+                runtimeVersion: {{ $runtimeVersion | quote }}
+                servicePlanIdSelector:
+                  matchLabels:
+                    catalog.cluster.local/azure-function: {{ $xrName }}
+                siteConfig:
+                  http2Enabled: true
+                  minimumTlsVersion: "1.2"
+                  vnetRouteAllEnabled: true
+                storageAuthenticationType: SystemAssignedIdentity
+                storageContainerType: blobContainer
+                storageContainerEndpoint: {{ $storageContainerEndpoint | quote }}
+                tags:
+            {{ $commonTags | toYaml | nindent 18 }}
+                webdeployPublishBasicAuthenticationEnabled: false
+                virtualNetworkSubnetId: {{ $flexConsumptionSubnetID | quote }}
+
+            {{/*
+              The Function App's system-assigned identity only becomes known once it has been observed
+              at least once, so this grant renders starting on a later reconcile, not the first one. It
+              is scoped to this Function's dedicated account so AzureWebJobsStorage can create and use
+              its host-metadata containers as well as read the deployment package. Nothing outside this
+              Function uses the account, and the role cannot manage access itself.
+            */}}
+            {{ if and $functionPrincipalID $accountID }}
+            ---
+            apiVersion: authorization.azure.m.upbound.io/v1beta1
+            kind: RoleAssignment
+            metadata:
+              name: {{ $storageLabel }}-role-blob
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: role-assignment-blob
+            spec:
+              forProvider:
+                scope: {{ $accountID | quote }}
+                roleDefinitionName: "Storage Blob Data Owner"
+                principalId: {{ $functionPrincipalID | quote }}
+                principalType: ServicePrincipal
+                skipServicePrincipalAadCheck: true
+            {{ end }}
+
+            {{/* Optional access to existing Azure resources is deliberately restricted by the XRD to
+                 catalog-approved built-in roles. Rendering only after the Function identity is observed
+                 avoids an imperative wait loop and keeps the role assignment under Crossplane ownership. */}}
+            {{ if $functionPrincipalID }}
+            {{ range $assignment := $managedIdentityRoleAssignments }}
+            {{ $assignmentResourceName := printf "%s-role-%s" $xrName $assignment.name }}
+            {{ if gt (len $assignmentResourceName) 63 }}
+            {{ $assignmentResourceName = printf "%s-%s-%s" (trunc 20 $xrName | trimSuffix "-") (trunc 29 $assignment.name | trimSuffix "-") $postfix }}
+            {{ end }}
+            ---
+            apiVersion: authorization.azure.m.upbound.io/v1beta1
+            kind: RoleAssignment
+            metadata:
+              name: {{ $assignmentResourceName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: role-assignment-{{ $assignment.name }}
+            spec:
+              forProvider:
+                scope: {{ $assignment.scope | quote }}
+                roleDefinitionName: {{ $assignment.roleDefinitionName | quote }}
+                principalId: {{ $functionPrincipalID | quote }}
+                principalType: ServicePrincipal
+                skipServicePrincipalAadCheck: true
+            {{ end }}
+            {{ end }}
+            {{ end }}
+
+            {{/* A package is deployed only after the Function App and its host-storage access are ready.
+                 The Job reads the registry credentials distributed to every node by registry-operator and
+                 uses the node pool's existing Azure managed identity. Azure CLI owns OneDeploy and polling.
+                 A succeeded Job stays in desired state so a transient readiness flap cannot delete it and
+                 re-run the whole download and OneDeploy for a package that is already live. */}}
+            {{ if or $packageDeployed (and (get $ready "function-app") (get $ready "role-assignment-blob")) }}
+            ---
+            apiVersion: batch/v1
+            kind: Job
+            metadata:
+              name: {{ $packageDeploymentName }}
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $packageDeploymentResourceName }}
+            {{ if $packageDeployed }}
+                gotemplating.fn.crossplane.io/ready: "True"
+            {{ end }}
+              labels:
+                app.kubernetes.io/name: azure-function-package-deployment
+                catalog.cluster.local/azure-function: {{ $xrName }}
+            spec:
+              backoffLimit: 3
+              template:
+                metadata:
+                  labels:
+                    app.kubernetes.io/name: azure-function-package-deployment
+                    catalog.cluster.local/azure-function: {{ $xrName }}
+                spec:
+                  restartPolicy: Never
+                  containers:
+                    - name: deploy
+                      image: mcr.microsoft.com/azure-cli:2.77.0@sha256:d41153958a61392a4c9db1591e33b533ca8ab8b59529d212d06bb6ec7e9c1f25
+                      imagePullPolicy: IfNotPresent
+                      command:
+                        - /bin/bash
+                        - -ceu
+                        - |
+                          python3 - <<'PY'
+                          import base64
+                          import hashlib
+                          import json
+                          import os
+                          import urllib.parse
+                          import urllib.request
+                          import zipfile
+
+                          package_url = os.environ["PACKAGE_URL"]
+                          expected_sha256 = os.environ["PACKAGE_SHA256"]
+                          package_path = "/tmp/function.zip"
+
+                          with open("/var/run/platformplane-registry/config.json", encoding="utf-8") as config_file:
+                              registries = json.load(config_file).get("auths", {})
+
+                          package_url_parts = urllib.parse.urlsplit(package_url)
+                          if (
+                              package_url_parts.scheme != "https"
+                              or package_url_parts.username
+                              or package_url_parts.password
+                              or package_url_parts.query
+                              or package_url_parts.fragment
+                          ):
+                              raise RuntimeError("package URL must be an HTTPS URL without credentials or parameters")
+
+                          matching_credentials = []
+                          for registry, credential in registries.items():
+                              registry_url = urllib.parse.urlsplit(
+                                  registry if "://" in registry else "https://" + registry
+                              )
+                              if registry_url.scheme != "https" or not registry_url.hostname:
+                                  continue
+                              if not registry_url.hostname.startswith("registry."):
+                                  continue
+                              gitlab_host = "gitlab." + registry_url.hostname.removeprefix("registry.")
+                              if (
+                                  package_url_parts.hostname == gitlab_host
+                                  and package_url_parts.port == registry_url.port
+                              ):
+                                  matching_credentials.append(credential)
+                          if len(matching_credentials) != 1:
+                              raise RuntimeError("node registry config has no unique credential for the GitLab package host")
+                          credential = matching_credentials[0]
+
+                          token = credential.get("password", "")
+                          if not token and credential.get("auth"):
+                              token = base64.b64decode(credential["auth"]).decode().partition(":")[2]
+                          if not token:
+                              raise RuntimeError("GitLab registry token is missing")
+
+                          class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+                              def redirect_request(self, request, *args, **kwargs):
+                                  redirected = super().redirect_request(request, *args, **kwargs)
+                                  if redirected and redirected.host != request.host:
+                                      redirected.remove_header("PRIVATE-TOKEN")
+                                  return redirected
+
+                          request = urllib.request.Request(package_url, headers={"PRIVATE-TOKEN": token})
+                          digest = hashlib.sha256()
+                          size = 0
+                          with urllib.request.build_opener(SafeRedirectHandler()).open(request, timeout=60) as response:
+                              with open(package_path, "wb") as package_file:
+                                  while chunk := response.read(1024 * 1024):
+                                      size += len(chunk)
+                                      if size > 1024 * 1024 * 1024:
+                                          raise RuntimeError("package exceeds 1 GiB")
+                                      digest.update(chunk)
+                                      package_file.write(chunk)
+
+                          actual_sha256 = digest.hexdigest()
+                          if expected_sha256 and actual_sha256 != expected_sha256:
+                              raise RuntimeError(
+                                  f"package SHA-256 is {actual_sha256}, expected {expected_sha256}"
+                              )
+                          with zipfile.ZipFile(package_path) as archive:
+                              if "host.json" not in archive.namelist() or archive.getinfo("host.json").is_dir():
+                                  raise RuntimeError("deployment ZIP must contain host.json at its root")
+                          PY
+
+                          az login --identity --output none
+                          az functionapp deployment source config-zip \
+                            --subscription "$AZURE_SUBSCRIPTION_ID" \
+                            --resource-group "$AZURE_RESOURCE_GROUP" \
+                            --name "$FUNCTION_APP_NAME" \
+                            --src /tmp/function.zip \
+                            --timeout 600 \
+                            --only-show-errors \
+                            --output none
+                      env:
+                        - name: PACKAGE_URL
+                          value: {{ $packageURL | quote }}
+                        - name: PACKAGE_SHA256
+                          value: {{ $packageSHA256 | quote }}
+                        - name: AZURE_SUBSCRIPTION_ID
+                          value: {{ index $environment "subscription" | quote }}
+                        - name: AZURE_RESOURCE_GROUP
+                          value: {{ $resourceGroup | quote }}
+                        - name: FUNCTION_APP_NAME
+                          value: {{ $functionName | quote }}
+                      volumeMounts:
+                        - name: node-registry
+                          mountPath: /var/run/platformplane-registry/config.json
+                          readOnly: true
+                  volumes:
+                    - name: node-registry
+                      hostPath:
+                        path: /.docker/config.json
+                        type: File
+            {{ end }}
+
+            {{/* Resolve callable host keys only after the package is live. An ARM deployment gives the
+                 Azure provider a declarative listKeys call, avoiding Kubernetes API credentials in the
+                 deployment Job. Only functionKeys are retained; masterKey and systemKeys are excluded.
+
+                 parametersContent is the provider's only change-detection input, so it carries the
+                 package revision: the deployment re-runs once per package rollout, which is when the
+                 keys can actually differ, instead of on every reconcile or on a wall-clock schedule.
+                 Keeping it free of `now` also makes rendering deterministic and diffable. */}}
+            {{ if $packageDeployed }}
+            ---
+            apiVersion: resources.azure.m.upbound.io/v1beta1
+            kind: ResourceGroupTemplateDeployment
+            metadata:
+              name: {{ $functionName }}-host-keys
+              namespace: {{ $namespace }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: function-host-keys
+                crossplane.io/external-name: {{ $functionName }}-host-keys
+            spec:
+              forProvider:
+                deploymentMode: Incremental
+                resourceGroupName: {{ $resourceGroup | quote }}
+                parametersContent: |
+                  {{ dict "functionAppName" (dict "value" $functionName) "packageRevision" (dict "value" $packageRevision) | toJson }}
+                templateContent: |
+                  {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                      "functionAppName": {
+                        "type": "string"
+                      },
+                      "packageRevision": {
+                        "type": "string"
+                      }
+                    },
+                    "resources": [],
+                    "outputs": {
+                      "functionKeys": {
+                        "type": "object",
+                        "value": "[listKeys(resourceId('Microsoft.Web/sites/host', parameters('functionAppName'), 'default'), '2022-09-01').functionKeys]"
+                      }
+                    }
+                  }
+            {{ end }}
+
+            ---
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: {{ $connectionSecretName }}
+              namespace: {{ $namespace }}
+              annotations:
+                {{ setResourceNameAnnotation "connection-secret" }}
+            type: Opaque
+            {{ $hostname := dig "status" "atProvider" "defaultHostname" "" $function }}
+            {{ if $hostname }}
+            data:
+              package: {{ $packageURL | b64enc }}
+            {{ if $packageSHA256 }}
+              package-sha256: {{ $packageSHA256 | b64enc }}
+            {{ end }}
+              host: {{ $hostname | b64enc }}
+              name: {{ $functionName | b64enc }}
+              url: {{ printf "https://%s" $hostname | b64enc }}
+            {{ if $defaultFunctionKey }}
+              function-key: {{ $defaultFunctionKey | b64enc }}
+            {{ end }}
+            {{ else }}
+            data: {}
+            {{ end }}
+
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: crossplane-contrib-function-auto-ready
+
+    - step: enforce-creation-sequence
+      functionRef:
+        name: crossplane-contrib-function-sequencer
+      input:
+        apiVersion: sequencer.fn.crossplane.io/v1beta1
+        kind: Input
+        rules:
+          - sequence:
+              - "service-plan"
+              - "function-app"
+          - sequence:
+              - "account"
+              - "endpointblob"
+          - sequence:
+              - "account"
+              - "container"
+              - "function-app"
+              - "role-assignment-blob"
