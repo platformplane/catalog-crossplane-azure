@@ -35,19 +35,18 @@ spec:
             {{ $xrName := $xr.metadata.name }}
             {{ $namespace := $xr.metadata.namespace }}
             {{ $params := $xr.spec.parameters }}
-            {{/* Optional access configuration must not replace or disable the catalog defaults.
-                 Normalizing absent values here also keeps later range/with blocks from depending on
-                 Go template's <no value> behaviour. */}}
+            {{/* Default absent optional params to empty so range/with below don't hit Go's <no value>. */}}
             {{ $managedIdentityRoleAssignments := dig "managedIdentityRoleAssignments" (list) $params }}
             {{ $environmentVariables := dig "environmentVariables" (list) $params }}
+            {{/* Always allow the Azure Portal origin (for its Test/Run feature), plus any user-supplied ones. */}}
+            {{ $corsAllowedOrigins := uniq (concat (list "https://portal.azure.com") (dig "corsAllowedOrigins" (list) $params)) }}
             {{ $environment := index $.context "apiextensions.crossplane.io/environment" }}
             {{ $resourceGroup := index $environment "resourcegroup" }}
             {{ $location := index $environment "network-location" }}
             {{ $commonTags := dict "source" "crossplane" "xr-name" $xrName "xr-namespace" $namespace "composite" $xr.metadata.uid }}
 
-            {{/* The operator publishes this only after creating the delegated integration subnet.
-                 Until then, create the independent plan and storage resources but not a Function App
-                 that could not reach its private host storage. */}}
+            {{/* Empty until the operator creates the integration subnet; the Function App waits for
+                 it below, the plan and storage resources don't need it. */}}
             {{ $flexConsumptionSubnetID := dig "flex-consumption-subnet-id" "" $environment }}
             {{ $runtimeName := $params.runtimeName }}
             {{ $runtimeDefaultVersions := dict "dotnet-isolated" "8.0" "java" "17" "node" "20" "powershell" "7.4" "python" "3.11" "custom" "1.0" }}
@@ -80,16 +79,14 @@ spec:
             {{ range $variable := $environmentVariables }}
             {{ $_ := set $appSettings $variable.key $variable.value }}
             {{ end }}
-            {{/* Azure Functions still requires AzureWebJobsStorage for host metadata on Flex
-                 Consumption. Use the same dedicated account through the Function App's system identity;
-                 these platform-owned settings intentionally override user-provided values. The empty
-                 base setting is required by the Terraform-backed Flex Consumption provider to activate
-                 the identity-based AzureWebJobsStorage settings. */}}
+            {{/* Platform-owned; overrides any user-supplied value. AzureWebJobsStorage is still
+                 required for host metadata, pointed at our dedicated account via managed identity.
+                 The empty base value is what activates identity-based auth in the provider. */}}
             {{ $_ := set $appSettings "AzureWebJobsStorage" "" }}
             {{ $_ := set $appSettings "AzureWebJobsStorage__accountName" $storageAccountExternalName }}
             {{ $_ := set $appSettings "AzureWebJobsStorage__credential" "managedidentity" }}
 
-            {{/* Read back what was observed of our own composed resources on the previous reconcile. */}}
+            {{/* State observed from the previous reconcile. */}}
             {{ $account := dig "resources" "account" "resource" dict .observed }}
             {{ $accountID := dig "status" "atProvider" "id" "" $account }}
             {{ $accountBlobEndpoint := dig "status" "atProvider" "primaryBlobEndpoint" "" $account }}
@@ -107,8 +104,8 @@ spec:
             {{ else if kindIs "map" $identity }}
             {{ $functionPrincipalID = dig "principalId" "" $identity }}
             {{ end }}
-            {{/* Ready state of every composed resource a later render step has to wait for. Add a
-                 resource name here rather than repeating the condition scan per resource. */}}
+            {{/* Ready state of resources later steps wait on; add names here instead of repeating
+                 the condition scan per resource. */}}
             {{ $ready := dict }}
             {{ range $resourceName := list "function-app" "role-assignment-blob" }}
             {{ $_ := set $ready $resourceName false }}
@@ -119,8 +116,8 @@ spec:
             {{ end }}
             {{ end }}
             {{ $packageDeployment := dig "resources" $packageDeploymentResourceName "resource" dict .observed }}
-            {{/* The composition resource name embeds the package revision, so anything observed under
-                 it already belongs to the package currently requested. */}}
+            {{/* Resource name embeds the package revision, so anything observed here is for the
+                 currently requested package. */}}
             {{ $packageDeployed := gt (int (dig "status" "succeeded" 0 $packageDeployment)) 0 }}
             {{ $hostKeysDeployment := dig "resources" "function-host-keys" "resource" dict .observed }}
             {{ $hostKeysOutputContent := dig "status" "atProvider" "outputContent" "" $hostKeysDeployment }}
@@ -173,9 +170,8 @@ spec:
                 tags:
             {{ $commonTags | toYaml | nindent 18 }}
 
-            {{/* These functions need Blob storage both for the Flex deployment package and for
-                 AzureWebJobsStorage host metadata. Queue and Table private endpoints are unnecessary
-                 for the HTTP and timer triggers currently deployed through this catalog item. */}}
+            {{/* Blob only: used for the deployment package and AzureWebJobsStorage. Queue/Table aren't
+                 needed by the HTTP and timer triggers this catalog item deploys. */}}
             ---
             apiVersion: network.azure.m.upbound.io/v1beta1
             kind: PrivateEndpoint
@@ -237,11 +233,8 @@ spec:
               deploymentContainerEndpoint: {{ $storageContainerEndpoint | quote }}
             {{ end }}
 
-            {{/* Wait for both the Flex Consumption integration subnet and the deployment container's
-                 resolved blob endpoint before creating the Function App itself: without the subnet
-                 there is no virtualNetworkSubnetId, and without the endpoint there is nowhere for it
-                 to load its code from. The service plan, storage account, and container above don't
-                 need either and are created regardless. */}}
+            {{/* Function App needs the subnet (virtualNetworkSubnetId) and the resolved blob endpoint
+                 (deployment source); the plan, storage account, and container above need neither. */}}
             {{ if and $flexConsumptionSubnetID $storageContainerEndpoint $containerID }}
             ---
             apiVersion: web.azure.m.upbound.io/v1beta1
@@ -256,8 +249,7 @@ spec:
               forProvider:
                 appSettings:
             {{ $appSettings | toYaml | nindent 18 }}
-                # Work around provider-azure-web Observe panics when Azure returns no
-                # Authentication / Authorization configuration for the Function App.
+                # Works around provider-azure-web panicking when Azure returns no auth config.
                 authSettings:
                   enabled: false
                 httpsOnly: true
@@ -274,6 +266,9 @@ spec:
                   matchLabels:
                     catalog.cluster.local/azure-function: {{ $xrName }}
                 siteConfig:
+                  cors:
+                    allowedOrigins:
+            {{ $corsAllowedOrigins | toYaml | nindent 22 }}
                   http2Enabled: true
                   minimumTlsVersion: "1.2"
                   vnetRouteAllEnabled: true
@@ -285,13 +280,9 @@ spec:
                 webdeployPublishBasicAuthenticationEnabled: false
                 virtualNetworkSubnetId: {{ $flexConsumptionSubnetID | quote }}
 
-            {{/*
-              The Function App's system-assigned identity only becomes known once it has been observed
-              at least once, so this grant renders starting on a later reconcile, not the first one. It
-              is scoped to this Function's dedicated account so AzureWebJobsStorage can create and use
-              its host-metadata containers as well as read the deployment package. Nothing outside this
-              Function uses the account, and the role cannot manage access itself.
-            */}}
+            {{/* Renders once the identity is observed, not on the first reconcile. Scoped to this
+              Function's own storage account (host-metadata containers plus the deployment package);
+              nothing else uses this account. */}}
             {{ if and $functionPrincipalID $accountID }}
             ---
             apiVersion: authorization.azure.m.upbound.io/v1beta1
@@ -310,9 +301,8 @@ spec:
                 skipServicePrincipalAadCheck: true
             {{ end }}
 
-            {{/* Optional access to existing Azure resources is deliberately restricted by the XRD to
-                 catalog-approved built-in roles. Rendering only after the Function identity is observed
-                 avoids an imperative wait loop and keeps the role assignment under Crossplane ownership. */}}
+            {{/* XRD restricts this to catalog-approved roles. Rendered only once the identity is
+                 observed, avoiding an imperative wait loop. */}}
             {{ if $functionPrincipalID }}
             {{ range $assignment := $managedIdentityRoleAssignments }}
             {{ $assignmentResourceName := printf "%s-role-%s" $xrName $assignment.name }}
@@ -338,11 +328,10 @@ spec:
             {{ end }}
             {{ end }}
 
-            {{/* A package is deployed only after the Function App and its host-storage access are ready.
-                 The Job reads the registry credentials distributed to every node by registry-operator and
-                 uses the node pool's existing Azure managed identity. Azure CLI owns OneDeploy and polling.
-                 A succeeded Job stays in desired state so a transient readiness flap cannot delete it and
-                 re-run the whole download and OneDeploy for a package that is already live. */}}
+            {{/* Runs once the Function App and its blob role are ready. Uses the registry credentials
+                 registry-operator distributes to every node and the node pool's Azure identity; az CLI
+                 handles OneDeploy. A succeeded Job stays in place so a readiness flap can't force a
+                 redeploy of a package that's already live. */}}
             {{ if or $packageDeployed (and (get $ready "function-app") (get $ready "role-assignment-blob")) }}
             ---
             apiVersion: batch/v1
@@ -486,14 +475,12 @@ spec:
                         type: File
             {{ end }}
 
-            {{/* Resolve callable host keys only after the package is live. An ARM deployment gives the
-                 Azure provider a declarative listKeys call, avoiding Kubernetes API credentials in the
-                 deployment Job. Only functionKeys are retained; masterKey and systemKeys are excluded.
+            {{/* Only after the package is live. ARM's listKeys avoids passing Kubernetes credentials
+                 into the Job; only functionKeys are kept, not masterKey/systemKeys.
 
-                 parametersContent is the provider's only change-detection input, so it carries the
-                 package revision: the deployment re-runs once per package rollout, which is when the
-                 keys can actually differ, instead of on every reconcile or on a wall-clock schedule.
-                 Keeping it free of `now` also makes rendering deterministic and diffable. */}}
+                 parametersContent drives change-detection, so it carries the package revision: the
+                 deployment re-runs once per rollout instead of every reconcile. No `now`, so rendering
+                 stays deterministic. */}}
             {{ if $packageDeployed }}
             ---
             apiVersion: resources.azure.m.upbound.io/v1beta1

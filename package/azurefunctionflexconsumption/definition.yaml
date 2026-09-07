@@ -58,8 +58,7 @@ spec:
                     package:
                       type: string
                       format: uri
-                      description: "HTTPS URL of a function ZIP in this space's GitLab Generic Package registry. Change the URL to deploy a new version."
-                      example: "https://gitlab.zuluplane.io/api/v4/projects/<PROJECT_ID>/packages/generic/<PACKAGE_NAME>/1.0.0/<PACKAGE_NAME>.zip"
+                      description: "HTTPS URL of a function ZIP in this space's GitLab Generic Package registry. Change the URL to deploy a new version. Example: https://gitlab.zuluplane.io/api/v4/projects/<PROJECT_ID>/packages/generic/<PACKAGE_NAME>/1.0.0/<PACKAGE_NAME>.zip"
                       display-name: "Package URL"
                       maxLength: 2048
                       pattern: '^https://[^/?#]+/api/v4/projects/[^/?#]+/packages/generic/[^/?#]+/[^/?#]+/[^/?#]+\.zip$'
@@ -91,6 +90,15 @@ spec:
                         required:
                           - key
                           - value
+                    corsAllowedOrigins:
+                      type: array
+                      description: "Extra browser origins allowed to call the Function App."
+                      display-name: "CORS Allowed Origins"
+                      x-kubernetes-list-type: set
+                      items:
+                        type: string
+                        maxLength: 2048
+                        pattern: '^(\*|https?://[^/]+)$'
                     managedIdentityRoleAssignments:
                       type: array
                       title: "Managed Identity Role Assignments"
