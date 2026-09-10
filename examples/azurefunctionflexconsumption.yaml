@@ -3,11 +3,12 @@ kind: AzureFunctionFlexConsumption
 metadata:
   name: azurefunctionflexconsumption-sample
 spec:
+  # Declarative-only, not shown in the catalog form:
+  # packageSha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   parameters:
     runtimeName: node
     runtimeVersion: "20"
     package: https://gitlab.example.com/api/v4/projects/group%2Fproject/packages/generic/function/1.0.0/function.zip
-    # packageSha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef # optional
     environmentVariables:
       - key: EXAMPLE_SETTING
         value: example-value

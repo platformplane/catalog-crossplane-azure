@@ -52,7 +52,8 @@ spec:
             {{ $runtimeDefaultVersions := dict "dotnet-isolated" "8.0" "java" "17" "node" "20" "powershell" "7.4" "python" "3.11" "custom" "1.0" }}
             {{ $runtimeVersion := default (get $runtimeDefaultVersions $runtimeName) (dig "runtimeVersion" "" $params) }}
             {{ $packageURL := $params.package }}
-            {{ $packageSHA256 := dig "packageSha256" "" $params }}
+            {{/* Lives on spec, not spec.parameters, so the catalog UI never offers it. */}}
+            {{ $packageSHA256 := dig "packageSha256" "" $xr.spec }}
             {{/* Keep globally unique Azure names stable by hashing the immutable resource UID. */}}
             {{ $postfix := trunc 6 (sha256sum (printf "%s" $xr.metadata.uid)) }}
             {{/* Leave room for the -plan suffix within the 40-character Service Plan limit. */}}

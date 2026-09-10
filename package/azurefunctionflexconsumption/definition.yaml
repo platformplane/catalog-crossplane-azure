@@ -34,6 +34,14 @@ spec:
                 crossplane:
                   type: object
                   x-kubernetes-preserve-unknown-fields: true
+                # A sibling of parameters, not a member of it: the catalog UI renders only
+                # spec.parameters, so this stays declarative-only while keeping schema validation.
+                packageSha256:
+                  type: string
+                  description: "Lowercase SHA-256 checksum used to verify the ZIP before deployment. Set declaratively; not offered in the catalog form."
+                  minLength: 64
+                  maxLength: 64
+                  pattern: "^[a-f0-9]{64}$"
                 parameters:
                   type: object
                   properties:
@@ -53,22 +61,31 @@ spec:
                         - "custom"
                     runtimeVersion:
                       type: string
-                      description: "Runtime version. Defaults to .NET 8, Java 17, Node.js 20, PowerShell 7.4, Python 3.11, or custom handler 1.0."
+                      description: |-
+                        Runtime version for the selected runtime. Can be changed after creation.
+
+                        Defaults per runtime:
+
+                        - `dotnet-isolated` — 8.0
+                        - `java` — 17
+                        - `node` — 20
+                        - `powershell` — 7.4
+                        - `python` — 3.11
+                        - `custom` — 1.0
                       display-name: "Runtime Version"
                     package:
                       type: string
                       format: uri
-                      description: "HTTPS URL of a function ZIP in this space's GitLab Generic Package registry. Change the URL to deploy a new version. Example: https://gitlab.zuluplane.io/api/v4/projects/<PROJECT_ID>/packages/generic/<PACKAGE_NAME>/1.0.0/<PACKAGE_NAME>.zip"
+                      description: |-
+                        HTTPS URL of a function ZIP in this space's GitLab Generic Package registry.
+                        Change the URL to deploy a new version.
+
+                        Example:
+
+                        `https://gitlab.zuluplane.io/api/v4/projects/<PROJECT_ID>/packages/generic/<PACKAGE_NAME>/<VERSION>/<PACKAGE_NAME>.zip`
                       display-name: "Package URL"
                       maxLength: 2048
                       pattern: '^https://[^/?#]+/api/v4/projects/[^/?#]+/packages/generic/[^/?#]+/[^/?#]+/[^/?#]+\.zip$'
-                    packageSha256:
-                      type: string
-                      description: "Lowercase SHA-256 checksum used to verify the ZIP before deployment."
-                      display-name: "Package SHA-256"
-                      minLength: 64
-                      maxLength: 64
-                      pattern: "^[a-f0-9]{64}$"
                     environmentVariables:
                       type: array
                       description: "Function App settings."
@@ -102,7 +119,12 @@ spec:
                     managedIdentityRoleAssignments:
                       type: array
                       title: "Managed Identity Role Assignments"
-                      description: "Azure roles granted to the Function App's managed identity."
+                      description: |-
+                        Azure roles granted to the Function App's managed identity.
+
+                        Role and scope are fixed once an entry exists. To change either, remove the
+                        entry and add a new one under a different name.
+                      maxItems: 20
                       x-kubernetes-list-type: map
                       x-kubernetes-list-map-keys:
                         - name
@@ -119,15 +141,23 @@ spec:
                           roleDefinitionName:
                             type: string
                             title: "Role"
-                            description: "Azure role to assign."
+                            description: "Azure role to assign. Cannot be changed after creation."
                             default: "Azure Kubernetes Service Contributor Role"
+                            maxLength: 128
                             pattern: "^Azure Kubernetes Service Contributor Role$"
+                            x-kubernetes-validations:
+                              - rule: self == oldSelf
+                                message: "Role cannot be changed after creation. Remove this assignment and add a new one instead."
                           scope:
                             type: string
                             title: "Scope"
                             minLength: 1
+                            maxLength: 1024
                             pattern: "^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/[^/]+/.+$"
-                            description: "Azure resource ID that receives the role assignment."
+                            description: "Azure resource ID that receives the role assignment. Cannot be changed after creation."
+                            x-kubernetes-validations:
+                              - rule: self == oldSelf
+                                message: "Scope cannot be changed after creation. Remove this assignment and add a new one instead."
                         required:
                           - name
                           - roleDefinitionName
